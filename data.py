@@ -1,8 +1,7 @@
 from datasets import load_dataset
-from torch.nn.utils.rnn import pad_sequence
 import torch
 
-from typing import List
+from typing import List, Dict
 
 
 def get_dataset():
@@ -10,6 +9,15 @@ def get_dataset():
     print(dataset)
 
     return dataset
+
+
+def get_vocabs(src_lang: str, tgt_lang: str, path='./') -> Dict:
+    vocab_transforms = {}
+
+    for ln in [src_lang, tgt_lang]:
+        vocab_transforms[ln] = torch.load(path + f'{ln}_vocab_wmt14.vocab')
+
+    return vocab_transforms
 
 
 # helper function to club together sequential operations
@@ -20,27 +28,13 @@ def sequential_transforms(*transforms):
         return txt_input
     return func
 
-# function to add BOS/EOS and create tensor for input sequence indices
-def tensor_transform(token_ids: List[int]):
-    return torch.cat((torch.tensor([BOS_IDX]),
-                      torch.tensor(token_ids),
-                      torch.tensor([EOS_IDX])))
 
 # src and tgt language text transforms to convert raw strings into tensors indices
-text_transform = {}
-for ln in [SRC_LANGUAGE, TGT_LANGUAGE]:
-    text_transform[ln] = sequential_transforms(token_transform[ln], #Tokenization
-                                               vocab_transform[ln], #Numericalization
-                                               tensor_transform) # Add BOS/EOS and create tensor
-
-
-# function to collate data samples into batch tesors
-def collate_fn(batch):
-    src_batch, tgt_batch = [], []
-    for src_sample, tgt_sample in batch:
-        src_batch.append(text_transform[SRC_LANGUAGE](src_sample.rstrip("\n")))
-        tgt_batch.append(text_transform[TGT_LANGUAGE](tgt_sample.rstrip("\n")))
-
-    src_batch = pad_sequence(src_batch, padding_value=PAD_IDX)
-    tgt_batch = pad_sequence(tgt_batch, padding_value=PAD_IDX)
-    return src_batch, tgt_batch
+def get_text_transforms(src_lang, tgt_lang, token_transform, vocab_transform, tensor_transform):
+    text_transform = {}
+    for ln in [src_lang, tgt_lang]:
+        text_transform[ln] = sequential_transforms(token_transform[ln], #Tokenization
+                                                   vocab_transform[ln], #Numericalization
+                                                   tensor_transform) # Add BOS/EOS and create tensor
+    
+    return text_transform
