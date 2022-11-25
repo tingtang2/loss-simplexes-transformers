@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from torchtext.data.utils import get_tokenizer
 from timeit import default_timer as timer
 from typing import List
+from tqdm import tqdm
 
 torch.manual_seed(11192022)
 
@@ -75,6 +76,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, device):
         memory = memory.to(device)
         tgt_mask = (generate_square_subsequent_mask(ys.size(0))
                     .type(torch.bool)).to(device)
+
         out = model.decode(ys, memory, tgt_mask)
         out = out.transpose(0, 1)
         prob = model.generator(out[:, -1])
@@ -110,13 +112,10 @@ def train_epoch(model, optimizer, dataset, criterion, batch_size, device):
         tgt = tgt.to(device)
 
         tgt_input = tgt[:-1, :]
-
         src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, device, PAD_IDX)
-
         logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
 
         optimizer.zero_grad()
-
         tgt_out = tgt[1:, :]
         loss = criterion(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
         loss.backward()
@@ -138,9 +137,7 @@ def evaluate(model, data, criterion, batch_size, device):
         tgt = tgt.to(device)
 
         tgt_input = tgt[:-1, :]
-
-        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input)
-
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, device, PAD_IDX)
         logits = model(src, tgt_input, src_mask, tgt_mask,src_padding_mask, tgt_padding_mask, src_padding_mask)
 
         tgt_out = tgt[1:, :]
@@ -152,11 +149,11 @@ def evaluate(model, data, criterion, batch_size, device):
 def main() -> int:
     dataset = get_dataset()
     dataset.set_format(type='torch')
-    subsample_size = 100000
+    subsample_size = 40000
     
 
     train_data = dataset['train'][:subsample_size]['translation']
-    val_data = dataset['validation']
+    val_data = dataset['validation'][:]['translation']
 
     # configs
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -188,7 +185,7 @@ def main() -> int:
     optimizer = torch.optim.Adam(transformer.parameters(), lr=0.0001, betas=(0.9, 0.98), eps=1e-9)
 
     # training loop
-    for epoch in range(1, NUM_EPOCHS+1):
+    for epoch in tqdm(range(1, NUM_EPOCHS+1)):
         start_time = timer()
         train_loss = train_epoch(transformer, optimizer, train_data, criterion, BATCH_SIZE, device)
         end_time = timer()
