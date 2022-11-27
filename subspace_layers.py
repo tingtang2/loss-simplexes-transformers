@@ -24,30 +24,31 @@ class SubspaceLinear(nn.Linear):
 class TwoParamLinear(SubspaceLinear):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight_local = nn.Parameter(torch.zeros_like(self.weight))
+        self.weight_1= nn.Parameter(torch.zeros_like(self.weight))
 
     def initialize(self, seed):
         if seed == -1: # SCAFFOLD
-            torch.nn.init.zeros_(self.weight_local)
+            torch.nn.init.zeros_(self.weight_1)
         else:
             torch.manual_seed(seed)
-            torch.nn.init.xavier_normal_(self.weight_local)
+            torch.nn.init.xavier_normal_(self.weight_1)
 
 class LinesLinear(TwoParamLinear):
     def get_weight(self):
-        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_local
+        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_1
         return w
 
 
 # LSTM layer
 # https://discuss.pytorch.org/t/defining-weight-manually-for-lstm/102360/2
 class SubspaceLSTM(nn.LSTM):
-    def forward(self, x):
+    def forward(self, x, h=None):
         w = self.get_weight()
-        h = (
-            torch.zeros(self.num_layers, x.shape[0], self.hidden_size).to(x.device), 
-            torch.zeros(self.num_layers, x.shape[0], self.hidden_size).to(x.device)
-        )
+        if not h:
+            h = (
+                torch.zeros(self.num_layers, x.shape[0], self.hidden_size).to(x.device), 
+                torch.zeros(self.num_layers, x.shape[0], self.hidden_size).to(x.device)
+            )
         with torch.no_grad():
             torch._cudnn_rnn_flatten_weight(
                 weight_arr=w, 
@@ -67,29 +68,29 @@ class TwoParamLSTM(SubspaceLSTM):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for l in range(self.num_layers):
-            setattr(self, f'weight_hh_l{l}_local', nn.Parameter(torch.zeros_like(getattr(self, f'weight_hh_l{l}'))))
-            setattr(self, f'weight_ih_l{l}_local', nn.Parameter(torch.zeros_like(getattr(self, f'weight_ih_l{l}'))))
+            setattr(self, f'weight_hh_l{l}_1', nn.Parameter(torch.zeros_like(getattr(self, f'weight_hh_l{l}'))))
+            setattr(self, f'weight_ih_l{l}_1', nn.Parameter(torch.zeros_like(getattr(self, f'weight_ih_l{l}'))))
             if self.bias:
-                setattr(self, f'bias_hh_l{l}_local', nn.Parameter(torch.zeros_like(getattr(self, f'bias_hh_l{l}'))))
-                setattr(self, f'bias_ih_l{l}_local', nn.Parameter(torch.zeros_like(getattr(self, f'bias_ih_l{l}'))))
+                setattr(self, f'bias_hh_l{l}_1', nn.Parameter(torch.zeros_like(getattr(self, f'bias_hh_l{l}'))))
+                setattr(self, f'bias_ih_l{l}_1', nn.Parameter(torch.zeros_like(getattr(self, f'bias_ih_l{l}'))))
         
     def initialize(self, seed):
         if seed == -1: # SCAFFOLD
             for l in range(self.num_layers):
-                torch.nn.init.zeros_(getattr(self, f'weight_hh_l{l}_local'))
-                torch.nn.init.zeros_(getattr(self, f'weight_ih_l{l}_local'))
+                torch.nn.init.zeros_(getattr(self, f'weight_hh_l{l}_1'))
+                torch.nn.init.zeros_(getattr(self, f'weight_ih_l{l}_1'))
         else:
             for l in range(self.num_layers):
                 torch.manual_seed(seed)
-                torch.nn.init.uniform_(getattr(self, f'weight_hh_l{l}_local'), a=math.sqrt(1 / self.hidden_size) * -1, b=math.sqrt(1 / self.hidden_size))
-                torch.nn.init.uniform_(getattr(self, f'weight_ih_l{l}_local'), a=math.sqrt(1 / self.hidden_size) * -1, b=math.sqrt(1 / self.hidden_size))
+                torch.nn.init.uniform_(getattr(self, f'weight_hh_l{l}_1'), a=math.sqrt(1 / self.hidden_size) * -1, b=math.sqrt(1 / self.hidden_size))
+                torch.nn.init.uniform_(getattr(self, f'weight_ih_l{l}_1'), a=math.sqrt(1 / self.hidden_size) * -1, b=math.sqrt(1 / self.hidden_size))
             
 class LinesLSTM(TwoParamLSTM):
     def get_weight(self):
         weight_list = []
         for l in range(self.num_layers):
-            weight_list.append((1 - self.alpha) * getattr(self, f'weight_ih_l{l}') + self.alpha * getattr(self, f'weight_ih_l{l}_local'))
-            weight_list.append((1 - self.alpha) * getattr(self, f'weight_hh_l{l}') + self.alpha * getattr(self, f'weight_hh_l{l}_local'))
+            weight_list.append((1 - self.alpha) * getattr(self, f'weight_ih_l{l}') + self.alpha * getattr(self, f'weight_ih_l{l}_1'))
+            weight_list.append((1 - self.alpha) * getattr(self, f'weight_hh_l{l}') + self.alpha * getattr(self, f'weight_hh_l{l}_1'))
         return weight_list
 
     
@@ -104,16 +105,16 @@ class SubspaceEmbedding(nn.Embedding):
 class TwoParamEmbedding(SubspaceEmbedding):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.weight_local = nn.Parameter(torch.zeros_like(self.weight))
+        self.weight_1 = nn.Parameter(torch.zeros_like(self.weight))
     
     def initialize(self, seed):
         if seed == -1: # SCAFFOLD
-            torch.nn.init.zeros_(self.weight_local)
+            torch.nn.init.zeros_(self.weight_1)
         else:
             torch.manual_seed(seed)
-            torch.nn.init.normal_(self.weight_local)
+            torch.nn.init.normal_(self.weight_1)
         
 class LinesEmbedding(TwoParamEmbedding):
     def get_weight(self):
-        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_local
+        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_1
         return w

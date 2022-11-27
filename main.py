@@ -3,14 +3,17 @@ import torch
 from data import get_dataset, get_text_transforms, get_vocabs
 from torch.nn.utils.rnn import pad_sequence
 from model import Seq2SeqTransformer, EncoderRNN, DecoderRNN
+from subspace_models import Seq2SeqLSTMSubspace
 from torch import nn
 from torch.utils.data import DataLoader
 from torchtext.data.utils import get_tokenizer
 from timeit import default_timer as timer
 from typing import List
 from tqdm import tqdm
+from pathlib import Path
 
-torch.manual_seed(11192022)
+SEED = 111920222
+torch.manual_seed(SEED)
 
 # function to add BOS/EOS and create tensor for input sequence indices
 def tensor_transform(token_ids: List[int]):
@@ -208,13 +211,19 @@ def evaluate_rnn(dataset,
 
     return running_loss / len(eval_dataloader)
 
+def get_weight(m, i):
+    if i == 0:
+        return m.weight
+    return getattr(m, f'weight_{i}')
 
 def train_epoch_rnn_subspace(dataset, 
                              model, 
                              optimizer, 
                              criterion, 
                              device, 
-                             batch_size):
+                             batch_size,
+                             beta,
+                             **kwargs):
     model.train()
     running_loss = 0
     
@@ -230,7 +239,7 @@ def train_epoch_rnn_subspace(dataset,
                 setattr(m, f'alpha', alpha)
 
         optimizer.zero_grad()
-        decoder_output, decoder_hidden = model(src, tgt[:, :-1])
+        decoder_output = model(src, tgt[:, :-1])
         loss = criterion(decoder_output.reshape(-1, decoder_output.size(-1)), tgt[:, 1:].reshape(-1))
 
         # regularization
@@ -238,11 +247,28 @@ def train_epoch_rnn_subspace(dataset,
         norm = 0.0
         norm1 = 0.0
         for m in model.modules():
-            if isinstance(m, nn.Conv2d):
-                num += (self.weight * self.weight1).sum()
-                norm += self.weight.pow(2).sum()
-                norm1 += self.weight1.pow(2).sum()
-        loss += args.beta * (num.pow(2) / (norm * norm1))
+            if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
+                vi = get_weight(m, 0)
+                vj = get_weight(m, 1)
+                num += (vi * vj).sum()
+                norm += vi.pow(2).sum()
+                norm1 += vj.pow(2).sum()
+            if isinstance(m, nn.LSTM):
+                w_ih_i = getattr(m, 'weight_ih_l0')
+                w_ih_j = getattr(m, 'weight_ih_l0_1')
+
+                num += (w_ih_i * w_ih_j).sum()
+                norm += w_ih_i.pow(2).sum()
+                norm1 += w_ih_j.pow(2).sum()
+
+                w_hh_i = getattr(m, 'weight_hh_l0')
+                w_hh_j = getattr(m, 'weight_hh_l0_1')
+
+                num += (w_hh_i * w_hh_j).sum()
+                norm += w_hh_i.pow(2).sum()
+                norm1 += w_hh_j.pow(2).sum()
+
+        loss += beta * (num.pow(2) / (norm * norm1))
 
         loss.backward()
 
@@ -251,6 +277,33 @@ def train_epoch_rnn_subspace(dataset,
 
     return running_loss / len(dataset)
 
+def evaluate_rnn_subspace(dataset, 
+                          model, 
+                          criterion, 
+                          device, 
+                          batch_size,
+                          **kwargs):
+    model.eval()
+    running_losses = [0, 0, 0]
+    
+    eval_dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
+    alphas = [0.0, 0.5, 1.0]
+    for i, alpha in enumerate(alphas):
+        for m in model.modules():
+            if isinstance(m, nn.Linear) or isinstance(m, nn.LSTM) or isinstance(m, nn.Embedding):
+                setattr(m, f'alpha', alpha)
+        
+        with torch.no_grad():
+            for src, tgt in eval_dataloader:
+                src = src.transpose(-1, -2).to(device)
+                tgt = tgt.transpose(-1, -2).to(device)
+
+                decoder_output = model(src, tgt[:, :-1])
+                loss = criterion(decoder_output.reshape(-1, decoder_output.size(-1)), tgt[:, 1:].reshape(-1))
+
+                running_losses[i] += loss.item()
+
+    return [loss / len(dataset) for loss in running_losses]
 
 def main() -> int:
     dataset = get_dataset()
@@ -258,7 +311,9 @@ def main() -> int:
     
     # configs
     configs = {'subsample_size': 10000,
-               'model_type': 'rnn',
+               'model_type': 'rnn_subspace',
+               'beta': 1.0,
+               'save_dir': 'subspace_saved_metrics_models/',
                'debug': False}
 
     train_data = dataset['train'][:configs['subsample_size']]['translation']
@@ -274,7 +329,7 @@ def main() -> int:
     SRC_VOCAB_SIZE = len(vocab_transform[src_lang])
     TGT_VOCAB_SIZE = len(vocab_transform[tgt_lang])
 
-    EMB_SIZE = 512
+    EMB_SIZE = 256
     NHEAD = 4
     FFN_HID_DIM = 512
     BATCH_SIZE = 32
@@ -317,7 +372,27 @@ def main() -> int:
             end_time = timer()
             val_loss = evaluate_rnn(val_data, encoder, decoder, criterion, device, BATCH_SIZE)
             print((f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s"))
+    
+    elif configs['model_type'] == 'rnn_subspace':
+        model = Seq2SeqLSTMSubspace(SRC_VOCAB_SIZE, TGT_VOCAB_SIZE, EMB_SIZE, EMB_SIZE).to(device)
+        for m in model.modules():
+            if hasattr(m, 'initialize'):
+                m.initialize(SEED)
+        
+        criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, amsgrad=True)
 
+        # training loop
+        for epoch in tqdm(range(1, NUM_EPOCHS+1)):
+            start_time = timer()
+            train_loss = train_epoch_rnn_subspace(train_data, model, optimizer, criterion, device, BATCH_SIZE, **configs)
+            end_time = timer()
+            val_losses = evaluate_rnn_subspace(val_data, model, criterion, device, BATCH_SIZE)
+            print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_losses[0]:.3f}, Val loss alpha 0.5: {val_losses[1]:.3f}, Val loss alpha 1: {val_losses[2]:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
+
+        # save model
+        save_path = f'~/{configs["save_dir"]}/subspace_rnn.pt'
+        torch.save(model.state_dict(), save_path)
     return 0
 
 if __name__ == '__main__':

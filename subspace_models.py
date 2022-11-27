@@ -14,13 +14,15 @@ class Seq2SeqLSTMSubspace(nn.Module):
         self.encoder = LinesLSTM(input_size=embed_size,
                                  hidden_size=hidden_size,
                                  batch_first=True,
-                                 bidirectional=True)
+                                 bias=False)
+
         self.encoder_2_decoder = LinesLinear(2*hidden_size, hidden_size)
         
         self.tgt_embedding = LinesEmbedding(tgt_vocab_size, embed_size)
         self.decoder = LinesLSTM(input_size=embed_size,
                                  hidden_size=hidden_size,
-                                 batch_first=True)
+                                 batch_first=True,
+                                 bias=False)
         self.output = LinesLinear(hidden_size, tgt_vocab_size)
     
     def forward(self, src_tokens, tgt_tokens):
@@ -29,10 +31,9 @@ class Seq2SeqLSTMSubspace(nn.Module):
         
         output, (hidden, cell) = self.encoder(src_embed)
 
-        batch_size, tgt_seq_len = src_tokens.size()
+        batch_size, tgt_seq_len = tgt_tokens.size()
         tgt_embed = self.tgt_embedding(tgt_tokens).view(batch_size, tgt_seq_len, -1)
         tgt_embed = F.relu(tgt_embed)
-        
 
         output, (hidden, cell) = self.decoder(tgt_embed, (hidden, cell))
         return self.output(output)
