@@ -3,6 +3,7 @@
 import torch
 from torch import nn, Tensor
 from torch.nn import Transformer
+import torch.nn.functional as F
 
 import math
 
@@ -64,7 +65,7 @@ class Seq2SeqTransformer(nn.Module):
 
     def forward(self,
                 src: Tensor,
-                trg: Tensor,
+                tgt: Tensor,
                 src_mask: Tensor,
                 tgt_mask: Tensor,
                 src_padding_mask: Tensor,
@@ -72,7 +73,7 @@ class Seq2SeqTransformer(nn.Module):
                 memory_key_padding_mask: Tensor):
 
         src_emb = self.positional_encoding(self.src_tok_emb(src))
-        tgt_emb = self.positional_encoding(self.tgt_tok_emb(trg))
+        tgt_emb = self.positional_encoding(self.tgt_tok_emb(tgt))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
         return self.generator(outs)
@@ -85,3 +86,54 @@ class Seq2SeqTransformer(nn.Module):
         return self.transformer.decoder(self.positional_encoding(
                           self.tgt_tok_emb(tgt)), memory,
                           tgt_mask)
+
+# RNN based networks
+class EncoderRNN(nn.Module):
+    def __init__(self, 
+                 src_vocab_size,
+                 embed_size,
+                 hidden_size, 
+                 device):
+        super(EncoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.device = device
+
+        self.src_tok_emb = TokenEmbedding(src_vocab_size, embed_size)
+        self.lstm = nn.LSTM(input_size=hidden_size, 
+                            hidden_size=hidden_size, 
+                            batch_first=True, 
+                            bidirectional=True)
+
+    def forward(self, inputs):
+        batch_size, seq_len = inputs.size()
+        src_emb = self.src_tok_emb(inputs).view(batch_size, seq_len, -1)
+        
+        output, (hidden, cell) = self.lstm(src_emb)
+        return output, hidden, cell 
+
+
+class DecoderRNN(nn.Module):
+    def __init__(self,
+                 tgt_vocab_size,
+                 emb_size, 
+                 hidden_size, 
+                 output_size, 
+                 device):
+        super(DecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.device = device
+
+        self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, emb_size)
+        self.lstm = nn.LSTM(input_size=hidden_size, 
+                            hidden_size=hidden_size, 
+                            batch_first=True,
+                            bidirectional=True)
+        self.out = nn.Linear(2*hidden_size, output_size)
+
+    def forward(self, inputs, hidden, cell):
+        batch_size, seq_len = inputs.size()
+        inputs_embed = self.tgt_tok_emb(inputs).view(batch_size, seq_len, -1)
+        inputs_embed = F.relu(inputs_embed)
+        output, (hidden, cell) = self.lstm(inputs_embed, (hidden, cell))
+        output = self.out(output)
+        return output, hidden
