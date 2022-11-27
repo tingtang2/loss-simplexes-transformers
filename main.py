@@ -391,7 +391,7 @@ def main() -> int:
             print(f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_losses[0]:.3f}, Val loss alpha 0.5: {val_losses[1]:.3f}, Val loss alpha 1: {val_losses[2]:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s")
 
         # save model
-        save_path = f'~/{configs["save_dir"]}/subspace_rnn.pt'
+        save_path = f'~/{configs["save_dir"]}subspace_rnn.pt'
         torch.save(model.state_dict(), save_path)
     return 0
 
