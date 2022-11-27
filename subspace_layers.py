@@ -13,7 +13,7 @@ StandardBN = nn.BatchNorm2d
 StandardLSTM = nn.LSTM
 StandardEmbedding = nn.Embedding
 
-# Dense layer implementation
+# Linear layer implementation
 class SubspaceLinear(nn.Linear):
     def forward(self, x):
         # call get_weight, which samples from the subspace, then use the corresponding weight.
@@ -35,7 +35,7 @@ class TwoParamLinear(SubspaceLinear):
 
 class LinesLinear(TwoParamLinear):
     def get_weight(self):
-        w = (1 - self.lam) * self.weight + self.lam * self.weight_local
+        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_local
         return w
 
 
@@ -88,8 +88,8 @@ class LinesLSTM(TwoParamLSTM):
     def get_weight(self):
         weight_list = []
         for l in range(self.num_layers):
-            weight_list.append((1 - self.lam) * getattr(self, f'weight_ih_l{l}') + self.lam * getattr(self, f'weight_ih_l{l}_local'))
-            weight_list.append((1 - self.lam) * getattr(self, f'weight_hh_l{l}') + self.lam * getattr(self, f'weight_hh_l{l}_local'))
+            weight_list.append((1 - self.alpha) * getattr(self, f'weight_ih_l{l}') + self.alpha * getattr(self, f'weight_ih_l{l}_local'))
+            weight_list.append((1 - self.alpha) * getattr(self, f'weight_hh_l{l}') + self.alpha * getattr(self, f'weight_hh_l{l}_local'))
         return weight_list
 
     
@@ -115,5 +115,5 @@ class TwoParamEmbedding(SubspaceEmbedding):
         
 class LinesEmbedding(TwoParamEmbedding):
     def get_weight(self):
-        w = (1 - self.lam) * self.weight + self.lam * self.weight_local
+        w = (1 - self.alpha) * self.weight + self.alpha * self.weight_local
         return w

@@ -159,13 +159,13 @@ def train_epoch_rnn(dataset,
                     batch_size):
     encoder.train()
     decoder.train()
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
     running_loss = 0
     
     train_dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
 
     for src, tgt in train_dataloader:
+        encoder_optimizer.zero_grad()
+        decoder_optimizer.zero_grad()
         src = src.transpose(-1, -2).to(device)
         tgt = tgt.transpose(-1, -2).to(device)
         
@@ -207,6 +207,49 @@ def evaluate_rnn(dataset,
             running_loss += loss.item()
 
     return running_loss / len(eval_dataloader)
+
+
+def train_epoch_rnn_subspace(dataset, 
+                             model, 
+                             optimizer, 
+                             criterion, 
+                             device, 
+                             batch_size):
+    model.train()
+    running_loss = 0
+    
+    train_dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn)
+
+    for src, tgt in train_dataloader:
+        src = src.transpose(-1, -2).to(device)
+        tgt = tgt.transpose(-1, -2).to(device)
+        
+        alpha = torch.rand(1, device=device)
+        for m in model.modules():
+            if isinstance(m, nn.Linear) or isinstance(m, nn.LSTM) or isinstance(m, nn.Embedding):
+                setattr(m, f'alpha', alpha)
+
+        optimizer.zero_grad()
+        decoder_output, decoder_hidden = model(src, tgt[:, :-1])
+        loss = criterion(decoder_output.reshape(-1, decoder_output.size(-1)), tgt[:, 1:].reshape(-1))
+
+        # regularization
+        num = 0.0
+        norm = 0.0
+        norm1 = 0.0
+        for m in model.modules():
+            if isinstance(m, nn.Conv2d):
+                num += (self.weight * self.weight1).sum()
+                norm += self.weight.pow(2).sum()
+                norm1 += self.weight1.pow(2).sum()
+        loss += args.beta * (num.pow(2) / (norm * norm1))
+
+        loss.backward()
+
+        optimizer.step()
+        running_loss += loss.item()
+
+    return running_loss / len(dataset)
 
 
 def main() -> int:
@@ -258,8 +301,8 @@ def main() -> int:
             end_time = timer()
             val_loss = evaluate(transformer, val_data, criterion, BATCH_SIZE, device)
             print((f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "f"Epoch time = {(end_time - start_time):.3f}s"))
-
-    else:
+    
+    elif configs['model_type'] == 'rnn':
         encoder = EncoderRNN(SRC_VOCAB_SIZE, EMB_SIZE, EMB_SIZE, device).to(device)
         decoder = DecoderRNN(TGT_VOCAB_SIZE, EMB_SIZE, EMB_SIZE, TGT_VOCAB_SIZE, device).to(device)
         

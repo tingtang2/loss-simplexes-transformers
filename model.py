@@ -99,10 +99,12 @@ class EncoderRNN(nn.Module):
         self.device = device
 
         self.src_tok_emb = TokenEmbedding(src_vocab_size, embed_size)
-        self.lstm = nn.LSTM(input_size=hidden_size, 
+        self.lstm = nn.LSTM(input_size=embed_size, 
                             hidden_size=hidden_size, 
-                            batch_first=True, 
-                            bidirectional=True)
+                            batch_first=True)
+                            # bidirectional=True)
+        
+        # self.encoder_2_decoder = nn.Linear(2*hidden_size, hidden_size)
 
     def forward(self, inputs):
         batch_size, seq_len = inputs.size()
@@ -124,11 +126,10 @@ class DecoderRNN(nn.Module):
         self.device = device
 
         self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, emb_size)
-        self.lstm = nn.LSTM(input_size=hidden_size, 
+        self.lstm = nn.LSTM(input_size=emb_size, 
                             hidden_size=hidden_size, 
-                            batch_first=True,
-                            bidirectional=True)
-        self.out = nn.Linear(2*hidden_size, output_size)
+                            batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
 
     def forward(self, inputs, hidden, cell):
         batch_size, seq_len = inputs.size()
