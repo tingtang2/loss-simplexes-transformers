@@ -1,16 +1,19 @@
 import sys
-import torch
-from data import get_dataset, get_text_transforms, get_vocabs
-from torch.nn.utils.rnn import pad_sequence
-from models.model import Seq2SeqTransformer, EncoderRNN, DecoderRNN
-from models.subspace_models import Seq2SeqLSTMSubspace
-from torch import nn
-from torch.utils.data import DataLoader
-from torchtext.data.utils import get_tokenizer
+from pathlib import Path
 from timeit import default_timer as timer
 from typing import List
+
+import torch
+from torch import nn
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader
+from torchtext.data.utils import get_tokenizer
+from torchtext.datasets import Multi30k
 from tqdm import tqdm
-from pathlib import Path
+
+from data import get_dataset, get_text_transforms, get_vocabs
+from models.model import DecoderRNN, EncoderRNN, Seq2SeqTransformer
+from models.subspace_models import Seq2SeqLSTMSubspace
 
 SEED = 111920222
 torch.manual_seed(SEED)
@@ -41,9 +44,10 @@ MAX_LENGTH = 1000
 # function to collate data samples into batch tesors
 def collate_fn(batch):
     src_batch, tgt_batch = [], []
-    for pair in batch:
-        src_sample = pair[src_lang]
-        tgt_sample = pair[tgt_lang]
+    #for pair in batch:
+    for src_sample, tgt_sample in batch:
+        # src_sample = pair[src_lang]
+        # tgt_sample = pair[tgt_lang]
         src_batch.append(text_transform[src_lang](src_sample.rstrip("\n")))
         tgt_batch.append(text_transform[tgt_lang](tgt_sample.rstrip("\n")))
 
@@ -298,7 +302,7 @@ def train_epoch_rnn_subspace(dataset, model, optimizer, criterion, device,
         optimizer.step()
         running_loss += loss.item()
 
-    return running_loss / len(dataset)
+    return running_loss / 29000
 
 
 def evaluate_rnn_subspace(dataset, model, criterion, device, batch_size,
@@ -328,12 +332,12 @@ def evaluate_rnn_subspace(dataset, model, criterion, device, batch_size,
 
                 running_losses[i] += loss.item()
 
-    return [loss / len(dataset) for loss in running_losses]
+    return [loss / 1014 for loss in running_losses]
 
 
 def main() -> int:
-    dataset = get_dataset()
-    dataset.set_format(type='torch')
+    # dataset = get_dataset()
+    # dataset.set_format(type='torch')
 
     # configs
     configs = {
@@ -344,8 +348,11 @@ def main() -> int:
         'debug': False
     }
 
-    train_data = dataset['train'][:configs['subsample_size']]['translation']
-    val_data = dataset['validation'][:]['translation']
+    # train_data = dataset['train'][:configs['subsample_size']]['translation']
+    # val_data = dataset['validation'][:]['translation']
+
+    train_data = Multi30k(split='train', language_pair=(src_lang, tgt_lang))
+    val_data = Multi30k(split='valid', language_pair=(src_lang, tgt_lang))
 
     if configs['debug']:
         device = torch.device('cpu')
