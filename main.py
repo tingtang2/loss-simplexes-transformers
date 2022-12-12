@@ -344,7 +344,7 @@ def main() -> int:
         'subsample_size': 10000,
         'model_type': 'rnn_subspace',
         'beta': 1.0,
-        'save_dir': 'subspace_saved_metrics_models/',
+        'save_dir': '/home/tingchen/subspace_saved_metrics_models/',
         'debug': False
     }
 
@@ -452,7 +452,7 @@ def main() -> int:
                 f"Epoch time = {(end_time - start_time):.3f}s")
 
         # save model
-        save_path = f'~/{configs["save_dir"]}subspace_rnn.pt'
+        save_path = f'{configs["save_dir"]}subspace_rnn.pt'
         torch.save(model.state_dict(), save_path)
     return 0
 
