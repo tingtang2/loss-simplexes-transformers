@@ -89,10 +89,9 @@ class Seq2SeqTransformer(nn.Module):
 # RNN based networks
 class EncoderRNN(nn.Module):
 
-    def __init__(self, src_vocab_size, embed_size, hidden_size, device):
+    def __init__(self, src_vocab_size, embed_size, hidden_size):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.device = device
 
         self.src_tok_emb = TokenEmbedding(src_vocab_size, embed_size)
         self.lstm = nn.LSTM(input_size=embed_size,
@@ -112,14 +111,12 @@ class EncoderRNN(nn.Module):
 
 class DecoderRNN(nn.Module):
 
-    def __init__(self, tgt_vocab_size, emb_size, hidden_size, output_size,
-                 device):
+    def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size):
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.device = device
 
-        self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, emb_size)
-        self.lstm = nn.LSTM(input_size=emb_size,
+        self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, embed_size)
+        self.lstm = nn.LSTM(input_size=embed_size,
                             hidden_size=hidden_size,
                             batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
@@ -131,3 +128,28 @@ class DecoderRNN(nn.Module):
         output, (hidden, cell) = self.lstm(inputs_embed, (hidden, cell))
         output = self.out(output)
         return output, hidden, cell
+
+
+class Seq2SeqLSTM(nn.Module):
+
+    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size,
+                 hidden_size):
+        super(Seq2SeqLSTM, self).__init__()
+
+        self.encoder = EncoderRNN(src_vocab_size=src_vocab_size,
+                                  embed_size=embed_size,
+                                  hidden_size=hidden_size)
+
+        self.decoder = DecoderRNN(tgt_vocab_size=tgt_vocab_size,
+                                  embed_size=embed_size,
+                                  hidden_size=hidden_size)
+
+    def forward(self, src_tokens, tgt_tokens):
+        batch_size, seq_len = src_tokens.size()
+        encoder_outputs, encoder_hidden, encoder_cell = self.encoder(
+            src_tokens)
+
+        decoder_output, decoder_hidden, decoder_cell = self.decoder(
+            tgt_tokens, encoder_hidden, encoder_cell)
+
+        return decoder_output, decoder_hidden, decoder_cell

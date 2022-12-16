@@ -3,6 +3,12 @@ import torch
 
 from typing import List, Dict
 
+# leftovers for WMT
+# dataset = get_dataset()
+# dataset.set_format(type='torch')
+# train_data = dataset['train'][:configs['subsample_size']]['translation']
+# val_data = dataset['validation'][:]['translation']
+
 
 def get_dataset():
     dataset = load_dataset('wmt14', 'de-en')
