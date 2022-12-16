@@ -180,40 +180,53 @@ def evaluate(model, data, criterion, batch_size, device):
 
 # train and eval functions for rnn
 ##################################################################################################
-def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
+def rnn_translate(encoder,
+                  decoder,
+                  input_tensor,
+                  device,
+                  vocab_transform,
+                  max_length=MAX_LENGTH,
+                  use_attention=False):
     with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
         input_length = input_tensor.size()[0]
-        encoder_hidden = encoder.initHidden()
+        # encoder_hidden = torch.zeros(1, 1, encoder.hidden_size, device=device)
 
         encoder_outputs = torch.zeros(max_length,
                                       encoder.hidden_size,
                                       device=device)
 
+        # print(input_tensor.size())
         for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
+            encoder_output, encoder_hidden, cell = encoder(
+                input_tensor[ei].reshape((1, -1)))
             encoder_outputs[ei] += encoder_output[0, 0]
 
-        decoder_input = torch.tensor([[SOS_token]], device=device)  # SOS
+        decoder_input = torch.tensor([[BOS_IDX]], device=device)  #BOS
 
         decoder_hidden = encoder_hidden
 
-        decoded_words = []
+        decoded_tokens = []
         decoder_attentions = torch.zeros(max_length, max_length)
 
         for di in range(max_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            decoder_attentions[di] = decoder_attention.data
-            topv, topi = decoder_output.data.topk(1)
-            if topi.item() == EOS_token:
-                decoded_words.append('<EOS>')
-                break
+            if use_attention:
+                decoder_output, decoder_hidden, cell, decoder_attention = decoder(
+                    decoder_input, decoder_hidden, cell, encoder_outputs)
+
+                decoder_attentions[di] = decoder_attention.data
             else:
-                decoded_words.append(output_lang.index2word[topi.item()])
+                decoder_output, decoder_hidden, cell = decoder(
+                    decoder_input.reshape((1, -1)), decoder_hidden, cell)
+            topv, topi = decoder_output.data.topk(1)
+            decoded_tokens.append(topi.item())
+            if topi.item() == EOS_IDX:
+                break
 
             decoder_input = topi.squeeze().detach()
+        decoded_words = " ".join(
+            vocab_transform[tgt_lang].lookup_tokens(decoded_tokens)).replace(
+                "<bos>", "").replace("<eos>", "")
+        print('decoded_words', decoded_words)
 
         return decoded_words, decoder_attentions[:di + 1]
 
@@ -236,8 +249,8 @@ def train_epoch_rnn(dataset, encoder, decoder, encoder_optimizer,
 
         encoder_outputs, encoder_hidden, encoder_cell = encoder(src)
 
-        decoder_output, decoder_hidden = decoder(tgt[:, :-1], encoder_hidden,
-                                                 encoder_cell)
+        decoder_output, decoder_hidden, decoder_cell = decoder(
+            tgt[:, :-1], encoder_hidden, encoder_cell)
         loss = criterion(decoder_output.reshape(-1, decoder_output.size(-1)),
                          tgt[:, 1:].reshape(-1))
 
@@ -247,10 +260,11 @@ def train_epoch_rnn(dataset, encoder, decoder, encoder_optimizer,
         decoder_optimizer.step()
         running_loss += loss.item()
 
-    return running_loss / len(dataset)
+    return running_loss / 1014
 
 
-def evaluate_rnn(dataset, encoder, decoder, criterion, device, batch_size):
+def evaluate_rnn(dataset, encoder, decoder, criterion, device, batch_size,
+                 vocab_transform):
     encoder.eval()
     decoder.eval()
     running_loss = 0
@@ -258,6 +272,8 @@ def evaluate_rnn(dataset, encoder, decoder, criterion, device, batch_size):
     eval_dataloader = DataLoader(dataset,
                                  batch_size=batch_size,
                                  collate_fn=collate_fn)
+    tgts = []
+    pred_tgts = []
 
     with torch.no_grad():
         for src, tgt in eval_dataloader:
@@ -266,18 +282,28 @@ def evaluate_rnn(dataset, encoder, decoder, criterion, device, batch_size):
 
             encoder_outputs, encoder_hidden, encoder_cell = encoder(src)
 
-            decoder_output, decoder_hidden = decoder(tgt[:, :-1],
-                                                     encoder_hidden,
-                                                     encoder_cell)
+            decoder_output, decoder_hidden, decoder_cell = decoder(
+                tgt[:, :-1], encoder_hidden, encoder_cell)
             loss = criterion(
                 decoder_output.reshape(-1, decoder_output.size(-1)),
                 tgt[:, 1:].reshape(-1))
 
-            decoder_output = translate()
+            pred_trg, _ = rnn_translate(encoder, decoder, src, device,
+                                        vocab_transform)
 
             running_loss += loss.item()
+            pred_tgts.append(pred_trg)
+            tgt_words = [
+                " ".join(vocab_transform[tgt_lang].lookup_tokens(
+                    list(tgt[example].cpu().numpy()))).replace("<bos>",
+                                                               "").replace(
+                                                                   "<eos>", "")
+                for example in range(tgt.size(0))
+            ]
 
-    return running_loss / len(eval_dataloader)
+            tgts.append([tgt_words])
+
+    return running_loss / 1014, bleu_score(pred_tgts, tgts)
 
 
 def get_weight(m, i):
@@ -355,6 +381,8 @@ def evaluate_rnn_subspace(dataset, model, criterion, device, batch_size,
                                  batch_size=batch_size,
                                  collate_fn=collate_fn)
     alphas = [0.0, 0.5, 1.0]
+    tgts = []
+    pred_tgts = []
     for i, alpha in enumerate(alphas):
         for m in model.modules():
             if isinstance(m, nn.Linear) or isinstance(
@@ -372,8 +400,35 @@ def evaluate_rnn_subspace(dataset, model, criterion, device, batch_size,
                     tgt[:, 1:].reshape(-1))
 
                 running_losses[i] += loss.item()
+                pred_trg = pred_trg[:-1]
 
-    return [loss / 1014 for loss in running_losses]
+                pred_tgts.append(pred_trg)
+                tgts.append([tgt])
+
+    return [loss / 1014
+            for loss in running_losses], bleu_score(pred_tgts, tgts)
+
+
+# def calculate_bleu(data, src_field, trg_field, model, device, max_len=50):
+
+#     trgs = []
+#     pred_trgs = []
+
+#     for datum in data:
+
+#         src = vars(datum)['src']
+#         trg = vars(datum)['trg']
+
+#         pred_trg, _ = translate_sentence(src, src_field, trg_field, model,
+#                                          device, max_len)
+
+#         #cut off  token
+#         pred_trg = pred_trg[:-1]
+
+#         pred_trgs.append(pred_trg)
+#         trgs.append([trg])
+
+#     return bleu_score(pred_trgs, trgs)
 
 
 def main() -> int:
@@ -383,7 +438,7 @@ def main() -> int:
     # configs
     configs = {
         'subsample_size': 10000,
-        'model_type': 'rnn_subspace',
+        'model_type': 'rnn',
         'beta': 1.0,
         'save_dir': '/home/tingchen/subspace_saved_metrics_models/',
         'debug': False
@@ -463,8 +518,13 @@ def main() -> int:
                                          encoder_optimizer, decoder_optimizer,
                                          criterion, device, BATCH_SIZE)
             end_time = timer()
-            val_loss = evaluate_rnn(val_data, encoder, decoder, criterion,
-                                    device, BATCH_SIZE)
+            val_loss = evaluate_rnn(val_data,
+                                    encoder,
+                                    decoder,
+                                    criterion,
+                                    device,
+                                    BATCH_SIZE,
+                                    vocab_transform=vocab_transform)
             print((
                 f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "
                 f"Epoch time = {(end_time - start_time):.3f}s"))

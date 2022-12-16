@@ -24,6 +24,24 @@ class Seq2SeqLSTMSubspace(nn.Module):
                                  bias=False)
         self.output = LinesLinear(hidden_size, tgt_vocab_size)
 
+    def encode(self, src_tokens):
+        batch_size, seq_len = src_tokens.size()
+        src_embed = self.src_embedding(src_tokens).view(
+            batch_size, seq_len, -1)
+
+        output, (hidden, cell) = self.encoder(src_embed)
+
+        return output, (hidden, cell)
+
+    def decode(self, tgt_tokens, hidden, cell):
+        batch_size, tgt_seq_len = tgt_tokens.size()
+        tgt_embed = self.tgt_embedding(tgt_tokens).view(
+            batch_size, tgt_seq_len, -1)
+        tgt_embed = F.relu(tgt_embed)
+
+        output, _ = self.decoder(tgt_embed, (hidden, cell))
+        return self.output(output)
+
     def forward(self, src_tokens, tgt_tokens):
         batch_size, seq_len = src_tokens.size()
         src_embed = self.src_embedding(src_tokens).view(
