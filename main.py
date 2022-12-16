@@ -20,7 +20,7 @@ import utils
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=
-        'Create and run pretraining and finetuning experiments with Bayesian autoencoders'
+        'Create and run loss subspace experiments for neural machine translation'
     )
 
     parser.add_argument('--epochs',

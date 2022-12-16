@@ -20,7 +20,7 @@ class RNNTrainer(BaseTrainer):
         self.model = Seq2SeqLSTM(src_vocab_size=self.src_vocab_size,
                                  tgt_vocab_size=self.tgt_vocab_size,
                                  embed_size=self.embed_size,
-                                 hidden_size=self.hidden_size)
+                                 hidden_size=self.hidden_size).to(self.device)
 
         self.optimizer = self.optimizer_type(self.model.parameters(),
                                              lr=self.learning_rate)
@@ -34,7 +34,7 @@ class RNNTrainer(BaseTrainer):
             train_loss = self.train_epoch(train_loader)
             end_time = timer()
 
-            val_loss, val_bleu = self.evaluate_rnn(val_loader)
+            val_loss, val_bleu = self.eval_epoch(val_loader)
             logging.info((
                 f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu}"
                 f"Epoch time = {(end_time - start_time):.3f}s"))
@@ -59,7 +59,7 @@ class RNNTrainer(BaseTrainer):
             self.optimizer.step()
             running_loss += loss.item()
 
-        return running_loss / (len(loader) * self.batch_size)
+        return running_loss / self.train_set_size
 
     def eval_epoch(self, loader: DataLoader):
         self.model.eval()
@@ -95,8 +95,7 @@ class RNNTrainer(BaseTrainer):
 
                 tgts.append([tgt_words])
 
-        return running_loss / (len(loader) * self.batch_size), bleu_score(
-            pred_tgts, tgts)
+        return running_loss / self.val_set_size, bleu_score(pred_tgts, tgts)
 
     def rnn_translate(self, input_tensor, use_attention=False):
         with torch.no_grad():
@@ -108,7 +107,7 @@ class RNNTrainer(BaseTrainer):
 
             # print(input_tensor.size())
             for ei in range(input_length):
-                encoder_output, encoder_hidden, cell = self.encoder(
+                encoder_output, encoder_hidden, cell = self.model.encoder(
                     input_tensor[ei].reshape((1, -1)))
                 encoder_outputs[ei] += encoder_output[0, 0]
 
@@ -118,7 +117,8 @@ class RNNTrainer(BaseTrainer):
             decoder_hidden = encoder_hidden
 
             decoded_tokens = []
-            decoder_attentions = torch.zeros(utils.MAX_LENGTH, utils.MAX_LENTH)
+            decoder_attentions = torch.zeros(utils.MAX_LENGTH,
+                                             utils.MAX_LENGTH)
 
             for di in range(utils.MAX_LENGTH):
                 if use_attention:
@@ -138,7 +138,6 @@ class RNNTrainer(BaseTrainer):
             decoded_words = " ".join(self.vocab_transform[
                 utils.tgt_lang].lookup_tokens(decoded_tokens)).replace(
                     "<bos>", "").replace("<eos>", "")
-            print('decoded_words', decoded_words)
 
             return decoded_words, decoder_attentions[:di + 1]
 

@@ -53,16 +53,24 @@ class BaseTrainer(ABC):
         for key, item in kwargs.items():
             setattr(self, key, item)
 
+        self.vocab_transform = get_vocabs(utils.src_lang, utils.tgt_lang)
+
+        self.src_vocab_size = len(self.vocab_transform[utils.src_lang])
+        self.tgt_vocab_size = len(self.vocab_transform[utils.tgt_lang])
+
+        self.train_set_size = 29000
+        self.val_set_size = 1014
+
+        self.test_sentence = [
+            'eine', 'frau', 'spielt', 'ein', 'lied', 'auf', 'ihrer', 'geige',
+            '.'
+        ]
+
     def create_dataloaders(self):
         train_data = Multi30k(split='train',
                               language_pair=(utils.src_lang, utils.tgt_lang))
         val_data = Multi30k(split='valid',
                             language_pair=(utils.src_lang, utils.tgt_lang))
-
-        self.vocab_transform = get_vocabs(utils.src_lang, utils.tgt_lang)
-
-        self.src_vocab_size = len(self.vocab_transform[utils.src_lang])
-        self.tgt_vocab_size = len(self.vocab_transform[utils.tgt_lang])
 
         train_dataloader = DataLoader(train_data,
                                       batch_size=self.batch_size,

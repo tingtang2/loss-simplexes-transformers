@@ -142,7 +142,8 @@ class Seq2SeqLSTM(nn.Module):
 
         self.decoder = DecoderRNN(tgt_vocab_size=tgt_vocab_size,
                                   embed_size=embed_size,
-                                  hidden_size=hidden_size)
+                                  hidden_size=hidden_size,
+                                  output_size=tgt_vocab_size)
 
     def forward(self, src_tokens, tgt_tokens):
         batch_size, seq_len = src_tokens.size()
