@@ -36,7 +36,7 @@ class RNNTrainer(BaseTrainer):
 
             val_loss, val_bleu = self.evaluate_rnn(val_loader)
             logging.info((
-                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, "
+                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu}"
                 f"Epoch time = {(end_time - start_time):.3f}s"))
 
     def train_epoch(self, loader: DataLoader):
@@ -59,7 +59,7 @@ class RNNTrainer(BaseTrainer):
             self.optimizer.step()
             running_loss += loss.item()
 
-        return running_loss / 1014
+        return running_loss / (len(loader) * self.batch_size)
 
     def eval_epoch(self, loader: DataLoader):
         self.model.eval()
@@ -95,7 +95,8 @@ class RNNTrainer(BaseTrainer):
 
                 tgts.append([tgt_words])
 
-        return running_loss / 1014, bleu_score(pred_tgts, tgts)
+        return running_loss / (len(loader) * self.batch_size), bleu_score(
+            pred_tgts, tgts)
 
     def rnn_translate(self, input_tensor, use_attention=False):
         with torch.no_grad():
