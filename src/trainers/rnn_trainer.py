@@ -21,11 +21,13 @@ class RNNTrainer(BaseTrainer):
                                  tgt_vocab_size=self.tgt_vocab_size,
                                  embed_size=self.embed_size,
                                  hidden_size=self.hidden_size,
-                                 dropout_prob=self.dropout_prob).to(
-                                     self.device)
+                                 dropout_prob=self.dropout_prob,
+                                 device=self.device).to(self.device)
 
         self.optimizer = self.optimizer_type(self.model.parameters(),
                                              lr=self.learning_rate)
+
+        self.name = 'seq2seq_vanilla_lstms'
 
     def run_experiment(self):
         train_loader, val_loader = self.create_dataloaders()
@@ -41,18 +43,20 @@ class RNNTrainer(BaseTrainer):
                 f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu:.3f} "
                 f"Epoch time = {(end_time - start_time):.3f}s"))
 
-            example_sentence_tokenized = utils.text_transform[utils.src_lang](
-                self.test_sentence.rstrip("\n"))
-            with torch.no_grad():
-                output_tokens, _ = self.rnn_translate(
-                    example_sentence_tokenized.to(self.device), None)
+            # example_sentence_tokenized = utils.text_transform[utils.src_lang](
+            #     self.test_sentence.rstrip("\n"))
+            # with torch.no_grad():
+            #     output_tokens, _ = self.rnn_translate(
+            #         example_sentence_tokenized.to(self.device), None)
 
-            translated_sentence = " ".join(output_tokens).replace(
-                "<bos>", "").replace("<eos>", "")
+            # translated_sentence = " ".join(output_tokens).replace(
+            #     "<bos>", "").replace("<eos>", "")
 
-            logging.info(
-                f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
-            )
+            # logging.info(
+            #     f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
+            # )
+
+        self.save_model(self.name)
 
     def train_epoch(self, loader: DataLoader):
         self.model.train()
@@ -63,14 +67,19 @@ class RNNTrainer(BaseTrainer):
             src = src.transpose(-1, -2).to(self.device)
             tgt = tgt.transpose(-1, -2).to(self.device)
 
-            decoder_output, decoder_hidden, decoder_cell = self.model(
-                src, tgt[:, :-1])
+            decoder_output, decoder_hidden, decoder_cell = self.model(src, tgt)
 
-            loss = self.criterion(
-                decoder_output.reshape(-1, decoder_output.size(-1)),
-                tgt[:, 1:].reshape(-1))
+            output_for_loss = decoder_output[:, 1:].reshape(
+                -1, decoder_output.size(-1))
+            tgt_for_loss = tgt[:, 1:].reshape(-1)
+
+            loss = self.criterion(output_for_loss, tgt_for_loss)
 
             loss.backward()
+
+            if self.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                               self.grad_clip)
 
             self.optimizer.step()
             running_loss += loss.item()
@@ -92,48 +101,37 @@ class RNNTrainer(BaseTrainer):
                 tgt = tgt.transpose(-1, -2).to(self.device)
 
                 decoder_output, decoder_hidden, decoder_cell = self.model(
-                    src, tgt[:, :-1])
+                    src, tgt, teacher_forcing_ratio=0)
 
-                loss = self.criterion(
-                    decoder_output.reshape(-1, decoder_output.size(-1)),
-                    tgt[:, 1:].reshape(-1))
+                output_for_loss = decoder_output[:, 1:].reshape(
+                    -1, decoder_output.size(-1))
+                tgt_for_loss = tgt[:, 1:].reshape(-1)
+                loss = self.criterion(output_for_loss, tgt_for_loss)
 
-                # print(
-                #     decoder_output.reshape(-1, decoder_output.size(-1)).shape,
-                #     'decode shape')
-                # print(tgt[:, 1:].reshape(-1).shape, 'tgt shape')
-
-                for sentence in range(src.size(0)):
-                    pred_tgt, _ = self.rnn_translate(src[sentence],
-                                                     tgt[sentence])
-                    pred_tgts.append(pred_tgt)
+                # for sentence in range(src.size(0)):
+                #     pred_tgt, _ = self.rnn_translate(src[sentence],
+                #                                      tgt[sentence])
+                #     pred_tgts.append(pred_tgt)
 
                 running_loss += loss.item()
-                tgt_words = [
-                    self.vocab_transform[utils.tgt_lang].lookup_tokens(
-                        list(tgt[example, 1:].cpu().numpy()))
-                    for example in range(tgt.size(0))
-                ]
+                # tgt_words = [
+                #     self.vocab_transform[utils.tgt_lang].lookup_tokens(
+                #         list(tgt[example, 1:].cpu().numpy()))
+                #     for example in range(tgt.size(0))
+                # ]
 
-                assert len(tgt_words) == tgt.size(0)
+                # assert len(tgt_words) == tgt.size(0)
 
-                tgts += tgt_words
+                # tgts += tgt_words
 
-        return running_loss / self.val_set_size, bleu_score(pred_tgts, tgts)
+        return running_loss / self.val_set_size, running_bleu  #, bleu_score(pred_tgts, tgts)
 
     def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
         with torch.no_grad():
-            input_tensor = input_tensor.squeeze()
             input_length = input_tensor.size(0)
 
-            encoder_outputs = torch.zeros(utils.MAX_LENGTH,
-                                          self.model.encoder.hidden_size,
-                                          device=self.device)
-
-            for ei in range(input_length):
-                encoder_output, encoder_hidden, cell = self.model.encoder(
-                    input_tensor[ei].reshape((1, -1)))
-                encoder_outputs[ei] += encoder_output[0, 0]
+            encoder_outputs, encoder_hidden, cell = self.model.encoder(
+                input_tensor.reshape((1, -1)))
 
             decoder_input = torch.tensor([[utils.BOS_IDX]],
                                          device=self.device)  #BOS
@@ -153,12 +151,13 @@ class RNNTrainer(BaseTrainer):
                 else:
                     decoder_output, decoder_hidden, cell = self.model.decoder(
                         decoder_input.reshape((1, -1)), decoder_hidden, cell)
-                topv, topi = decoder_output.data.topk(1)
-                decoded_tokens.append(topi.item())
-                if topi.item() == utils.EOS_IDX:
+
+                top_pred_token = decoder_output.argmax(-1)
+                decoded_tokens.append(top_pred_token.item())
+                if top_pred_token.item() == utils.EOS_IDX:
                     break
 
-                decoder_input = topi.squeeze().detach()
+                decoder_input = top_pred_token.squeeze().detach()
 
             decoded_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
                 decoded_tokens)

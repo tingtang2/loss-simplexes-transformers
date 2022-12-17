@@ -1,5 +1,6 @@
 import argparse
 import logging
+import random
 import sys
 from datetime import date
 
@@ -7,14 +8,13 @@ import torch
 from torch import nn
 from torch.optim import Adam, AdamW
 
+import utils
 from trainers.rnn_trainer import RNNTrainer
 
 arg_trainer_map = {
     'rnn': RNNTrainer,
 }
 arg_optimizer_map = {'adamw': AdamW, 'adam': Adam}
-
-import utils
 
 
 def main() -> int:
@@ -76,12 +76,17 @@ def main() -> int:
                         default=1.0,
                         type=float,
                         help='constant for learning subspaces')
+    parser.add_argument('--grad_clip',
+                        default=-1.0,
+                        type=float,
+                        help='max norm of gradients to clip')
 
     args = parser.parse_args()
     configs = args.__dict__
 
     # for repeatability
     torch.manual_seed(configs['seed'])
+    random.seed(configs['seed'])
 
     # set up logging
     filename = f'{configs["model_type"]}-{date.today()}'
