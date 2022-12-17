@@ -19,7 +19,7 @@ def get_dataset():
 
 def get_vocabs(src_lang: str,
                tgt_lang: str,
-               path='./',
+               path='/home/tingchen/loss-simplexes-transformers/data/',
                dataset='multi30k') -> Dict:
     vocab_transforms = {}
 
