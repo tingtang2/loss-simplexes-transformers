@@ -1,15 +1,15 @@
 import logging
+import random
 from timeit import default_timer as timer
 
 import torch
 from torch.utils.data import DataLoader
+from torchtext.data.metrics import bleu_score
 from tqdm import trange
 
+import utils
 from models.model import Seq2SeqLSTM
 from trainers.base_trainer import BaseTrainer
-
-import utils
-from torchtext.data.metrics import bleu_score
 
 
 class RNNTrainer(BaseTrainer):
@@ -95,8 +95,10 @@ class RNNTrainer(BaseTrainer):
         tgts = []
         pred_tgts = []
 
+        random_iteration = random.randint(0, 20)
+
         with torch.no_grad():
-            for src, tgt in loader:
+            for i, (src, tgt) in enumerate(loader):
                 src = src.transpose(-1, -2).to(self.device)
                 tgt = tgt.transpose(-1, -2).to(self.device)
 
@@ -114,6 +116,10 @@ class RNNTrainer(BaseTrainer):
                 #     pred_tgts.append(pred_tgt)
 
                 running_loss += loss.item()
+
+                if i == random_iteration:
+                    self.evaluate_randomly(src_tokens=src[0, :],
+                                           tgt_tokens=tgt[0, :])
                 # tgt_words = [
                 #     self.vocab_transform[utils.tgt_lang].lookup_tokens(
                 #         list(tgt[example, 1:].cpu().numpy()))
@@ -127,6 +133,7 @@ class RNNTrainer(BaseTrainer):
         return running_loss / self.val_set_size, running_bleu  #, bleu_score(pred_tgts, tgts)
 
     def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
+        self.model.eval()
         with torch.no_grad():
             input_length = input_tensor.size(0)
 
@@ -168,6 +175,19 @@ class RNNTrainer(BaseTrainer):
             # exit()
 
             return decoded_words, decoder_attentions[:di + 1]
+
+    def evaluate_randomly(self, src_tokens, tgt_tokens):
+        src_words = self.vocab_transform[utils.src_lang].lookup_tokens(
+            list(src_tokens.detach().cpu().numpy()))
+        tgt_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
+            list(tgt_tokens.detach().cpu().numpy()))
+
+        logging.info(f'> {" ".join(src_words)}')
+        logging.info(f'= {" ".join(tgt_words)}')
+        output_words, attentions = self.rnn_translate(input_tensor=src_tokens,
+                                                      tgt_tensor=None)
+        output_sentence = ' '.join(output_words)
+        logging.info(f'< {output_sentence}')
 
 
 # subspace functions
