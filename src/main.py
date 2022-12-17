@@ -33,11 +33,11 @@ def main() -> int:
                         type=str,
                         help='cpu or gpu ID to use')
     parser.add_argument('--batch_size',
-                        default=32,
+                        default=128,
                         type=int,
                         help='mini-batch size used to train model')
     parser.add_argument('--dropout_prob',
-                        default=0.15,
+                        default=0.5,
                         type=float,
                         help='probability for dropout layers')
     parser.add_argument('--save_dir',
@@ -69,7 +69,7 @@ def main() -> int:
                         type=int,
                         help='dimensionality of token embeddings')
     parser.add_argument('--hidden_size',
-                        default=256,
+                        default=512,
                         type=int,
                         help='dimensionality of hidden layers')
     parser.add_argument('--beta',
@@ -80,6 +80,10 @@ def main() -> int:
                         default=-1.0,
                         type=float,
                         help='max norm of gradients to clip')
+    parser.add_argument('--n_layers',
+                        default=2,
+                        type=int,
+                        help='number of lstm layers')
 
     args = parser.parse_args()
     configs = args.__dict__
@@ -107,6 +111,9 @@ def main() -> int:
     # perform experiment n times
     #for iter in range(configs['num_repeats']):
     trainer.run_experiment()
+    test_bleu = trainer.calc_test_bleu()
+    print('test bleu score:', test_bleu)
+    logging.info(f'test bleu score: {test_bleu * 100:.2f}')
 
     # EMB_SIZE = 256
     # NHEAD = 4

@@ -92,13 +92,15 @@ class Seq2SeqTransformer(nn.Module):
 # RNN based networks
 class EncoderRNN(nn.Module):
 
-    def __init__(self, src_vocab_size, embed_size, hidden_size, dropout_prob):
+    def __init__(self, src_vocab_size, embed_size, hidden_size, dropout_prob,
+                 n_layers):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
         self.src_tok_emb = TokenEmbedding(src_vocab_size, embed_size)
         self.lstm = nn.LSTM(input_size=embed_size,
                             hidden_size=hidden_size,
+                            num_layers=n_layers,
                             batch_first=True)
         # bidirectional=True)
 
@@ -118,13 +120,14 @@ class EncoderRNN(nn.Module):
 class DecoderRNN(nn.Module):
 
     def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size,
-                 dropout_prob):
+                 dropout_prob, n_layers):
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
         self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, embed_size)
         self.lstm = nn.LSTM(input_size=embed_size,
                             hidden_size=hidden_size,
+                            num_layers=n_layers,
                             batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
 
@@ -143,7 +146,7 @@ class DecoderRNN(nn.Module):
 class Seq2SeqLSTM(nn.Module):
 
     def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size,
-                 dropout_prob, device):
+                 dropout_prob, device, n_layers):
         super(Seq2SeqLSTM, self).__init__()
 
         self.src_vocab_size = src_vocab_size
@@ -152,13 +155,15 @@ class Seq2SeqLSTM(nn.Module):
         self.encoder = EncoderRNN(src_vocab_size=src_vocab_size,
                                   embed_size=embed_size,
                                   hidden_size=hidden_size,
-                                  dropout_prob=dropout_prob)
+                                  dropout_prob=dropout_prob,
+                                  n_layers=n_layers)
 
         self.decoder = DecoderRNN(tgt_vocab_size=tgt_vocab_size,
                                   embed_size=embed_size,
                                   hidden_size=hidden_size,
                                   output_size=tgt_vocab_size,
-                                  dropout_prob=dropout_prob)
+                                  dropout_prob=dropout_prob,
+                                  n_layers=n_layers)
 
         self.device = device
 
@@ -191,3 +196,69 @@ class Seq2SeqLSTM(nn.Module):
                 batch_size, 1) if teacher_force else top_pred_token.detach()
 
         return decoder_outputs, decoder_hidden, decoder_cell
+
+
+## with attention
+
+
+class Attention(nn.Module):
+
+    def __init__(self, enc_hid_dim, dec_hid_dim):
+        super(Attention, self).__init__()
+
+        self.attn = nn.Linear((enc_hid_dim * 2) + dec_hid_dim, dec_hid_dim)
+        self.v = nn.Linear(dec_hid_dim, 1, bias=False)
+
+    def forward(self, hidden, encoder_outputs, mask):
+
+        #hidden = [batch size, dec hid dim]
+        #encoder_outputs = [batch size, src len, enc hid dim]
+
+        batch_size = encoder_outputs.shape[0]
+        src_len = encoder_outputs.shape[1]
+
+        #repeat decoder hidden state src_len times
+        hidden = hidden.unsqueeze(1).repeat(1, src_len, 1)
+
+        #hidden = [batch size, src len, dec hid dim]
+        #encoder_outputs = [batch size, src len, enc hid dim]
+
+        energy = torch.tanh(
+            self.attn(torch.cat((hidden, encoder_outputs), dim=2)))
+
+        #energy = [batch size, src len, dec hid dim]
+
+        attention = self.v(energy).squeeze(2)
+
+        #attention = [batch size, src len]
+
+        attention = attention.masked_fill(mask == 0, -1e10)
+
+        return F.softmax(attention, dim=1)
+
+
+class AttentionDecoderRNN(nn.Module):
+
+    def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size,
+                 dropout_prob):
+        super(DecoderRNN, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, embed_size)
+        self.lstm = nn.LSTM(input_size=embed_size,
+                            hidden_size=hidden_size,
+                            batch_first=True)
+        self.out = nn.Linear(hidden_size, output_size)
+
+        self.dropout = nn.Dropout(dropout_prob)
+        self.attention = Attention(enc_hid_dim=hidden_size,
+                                   dec_hid_dim=hidden_size)
+
+    def forward(self, inputs, hidden, cell):
+        batch_size, seq_len = inputs.size()
+        inputs_embed = self.tgt_tok_emb(inputs).view(batch_size, seq_len, -1)
+        inputs_embed = F.relu(self.dropout(inputs_embed))
+
+        output, (hidden, cell) = self.lstm(inputs_embed, (hidden, cell))
+        output = self.out(output)
+        return output, hidden, cell

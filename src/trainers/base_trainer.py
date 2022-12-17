@@ -4,12 +4,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Union
 
-import numpy as np
-import pandas as pd
-import plotly.express as px
 import torch
 from torchtext.datasets import Multi30k
-from tqdm import tqdm
 
 import utils
 

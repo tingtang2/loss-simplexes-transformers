@@ -10,6 +10,7 @@ from tqdm import trange
 import utils
 from models.model import Seq2SeqLSTM
 from trainers.base_trainer import BaseTrainer
+from torchtext.datasets import Multi30k
 
 
 class RNNTrainer(BaseTrainer):
@@ -22,7 +23,8 @@ class RNNTrainer(BaseTrainer):
                                  embed_size=self.embed_size,
                                  hidden_size=self.hidden_size,
                                  dropout_prob=self.dropout_prob,
-                                 device=self.device).to(self.device)
+                                 device=self.device,
+                                 n_layers=self.n_layers).to(self.device)
 
         self.optimizer = self.optimizer_type(self.model.parameters(),
                                              lr=self.learning_rate)
@@ -43,18 +45,18 @@ class RNNTrainer(BaseTrainer):
                 f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu:.3f} "
                 f"Epoch time = {(end_time - start_time):.3f}s"))
 
-            # example_sentence_tokenized = utils.text_transform[utils.src_lang](
-            #     self.test_sentence.rstrip("\n"))
-            # with torch.no_grad():
-            #     output_tokens, _ = self.rnn_translate(
-            #         example_sentence_tokenized.to(self.device), None)
+            example_sentence_tokenized = utils.text_transform[utils.src_lang](
+                self.test_sentence.rstrip("\n"))
+            with torch.no_grad():
+                output_tokens, _ = self.rnn_translate(
+                    example_sentence_tokenized.to(self.device), None)
 
-            # translated_sentence = " ".join(output_tokens).replace(
-            #     "<bos>", "").replace("<eos>", "")
+            translated_sentence = " ".join(output_tokens).replace(
+                "<bos>", "").replace("<eos>", "")
 
-            # logging.info(
-            #     f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
-            # )
+            logging.info(
+                f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
+            )
 
         self.save_model(self.name)
 
@@ -84,18 +86,14 @@ class RNNTrainer(BaseTrainer):
             self.optimizer.step()
             running_loss += loss.item()
 
-        return running_loss / self.train_set_size
+        return running_loss
 
     def eval_epoch(self, loader: DataLoader):
         self.model.eval()
 
         running_loss = 0.0
-        running_bleu = 0.0
 
-        tgts = []
-        pred_tgts = []
-
-        random_iteration = random.randint(0, 20)
+        random_iteration = random.randint(0, 7)
 
         with torch.no_grad():
             for i, (src, tgt) in enumerate(loader):
@@ -110,27 +108,13 @@ class RNNTrainer(BaseTrainer):
                 tgt_for_loss = tgt[:, 1:].reshape(-1)
                 loss = self.criterion(output_for_loss, tgt_for_loss)
 
-                # for sentence in range(src.size(0)):
-                #     pred_tgt, _ = self.rnn_translate(src[sentence],
-                #                                      tgt[sentence])
-                #     pred_tgts.append(pred_tgt)
-
                 running_loss += loss.item()
 
                 if i == random_iteration:
                     self.evaluate_randomly(src_tokens=src[0, :],
                                            tgt_tokens=tgt[0, :])
-                # tgt_words = [
-                #     self.vocab_transform[utils.tgt_lang].lookup_tokens(
-                #         list(tgt[example, 1:].cpu().numpy()))
-                #     for example in range(tgt.size(0))
-                # ]
 
-                # assert len(tgt_words) == tgt.size(0)
-
-                # tgts += tgt_words
-
-        return running_loss / self.val_set_size, running_bleu  #, bleu_score(pred_tgts, tgts)
+        return running_loss
 
     def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
         self.model.eval()
@@ -168,13 +152,8 @@ class RNNTrainer(BaseTrainer):
 
             decoded_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
                 decoded_tokens)
-            # correct_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
-            #     list(tgt_tensor.cpu().numpy()))
-            # print(decoded_words)
-            # print(correct_words)
-            # exit()
 
-            return decoded_words, decoder_attentions[:di + 1]
+            return decoded_words[:-1], decoder_attentions[:di + 1]
 
     def evaluate_randomly(self, src_tokens, tgt_tokens):
         src_words = self.vocab_transform[utils.src_lang].lookup_tokens(
@@ -188,6 +167,42 @@ class RNNTrainer(BaseTrainer):
                                                       tgt_tensor=None)
         output_sentence = ' '.join(output_words)
         logging.info(f'< {output_sentence}')
+
+    def calc_test_bleu(self):
+        test_data = Multi30k(split='test',
+                             language_pair=(utils.src_lang, utils.tgt_lang))
+        self.model.load_state_dict(
+            torch.load(f'{self.save_dir}models/{self.name}.pt'))
+
+        loader = torch.utils.data.DataLoader(test_data,
+                                             batch_size=self.batch_size,
+                                             collate_fn=utils.collate_fn,
+                                             shuffle=False)
+
+        self.model.eval()
+        tgts = []
+        pred_tgts = []
+        with torch.no_grad():
+            for src, tgt, in loader:
+                src = src.transpose(-1, -2).to(self.device)
+                tgt = tgt.transpose(-1, -2).to(self.device)
+
+                for sentence in range(src.size(0)):
+                    pred_tgt, _ = self.rnn_translate(src[sentence],
+                                                     tgt[sentence])
+                    pred_tgts.append(pred_tgt)
+
+                # hack to remove <eos> <pad>
+                tgt_words = [[[
+                    element for element in ' '.join(self.vocab_transform[
+                        utils.tgt_lang].lookup_tokens(
+                            list(tgt[example, 1:].cpu().numpy()))).replace(
+                                '<pad>', '').replace('<eos>', '').split(' ')
+                    if element != ''
+                ]] for example in range(tgt.size(0))]
+
+                tgts += tgt_words
+        return bleu_score(pred_tgts, tgts)
 
 
 # subspace functions
