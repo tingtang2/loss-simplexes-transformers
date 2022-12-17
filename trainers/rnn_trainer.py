@@ -36,10 +36,24 @@ class RNNTrainer(BaseTrainer):
 
             val_loss, val_bleu = self.eval_epoch(val_loader)
             logging.info((
-                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu}"
+                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu:.3f} "
                 f"Epoch time = {(end_time - start_time):.3f}s"))
 
+            example_sentence_tokenized = utils.text_transform[utils.src_lang](
+                self.test_sentence.rstrip("\n"))
+            with torch.no_grad():
+                output_tokens, _ = self.rnn_translate(
+                    example_sentence_tokenized.to(self.device), None)
+
+            translated_sentence = " ".join(output_tokens).replace(
+                "<bos>", "").replace("<eos>", "")
+
+            logging.info(
+                f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
+            )
+
     def train_epoch(self, loader: DataLoader):
+        self.model.train()
         running_loss = 0
 
         for src, tgt in loader:
@@ -64,7 +78,8 @@ class RNNTrainer(BaseTrainer):
     def eval_epoch(self, loader: DataLoader):
         self.model.eval()
 
-        running_loss = 0
+        running_loss = 0.0
+        running_bleu = 0.0
 
         tgts = []
         pred_tgts = []
@@ -81,31 +96,38 @@ class RNNTrainer(BaseTrainer):
                     decoder_output.reshape(-1, decoder_output.size(-1)),
                     tgt[:, 1:].reshape(-1))
 
-                pred_trg, _ = self.rnn_translate(src)
+                # print(
+                #     decoder_output.reshape(-1, decoder_output.size(-1)).shape,
+                #     'decode shape')
+                # print(tgt[:, 1:].reshape(-1).shape, 'tgt shape')
+
+                for sentence in range(src.size(0)):
+                    pred_tgt, _ = self.rnn_translate(src[sentence],
+                                                     tgt[sentence])
+                    pred_tgts.append(pred_tgt)
 
                 running_loss += loss.item()
-                pred_tgts.append(pred_trg)
                 tgt_words = [
-                    " ".join(
-                        self.vocab_transform[utils.tgt_lang].lookup_tokens(
-                            list(tgt[example].cpu().numpy()))).replace(
-                                "<bos>", "").replace("<eos>", "")
+                    self.vocab_transform[utils.tgt_lang].lookup_tokens(
+                        list(tgt[example, 1:].cpu().numpy()))
                     for example in range(tgt.size(0))
                 ]
 
-                tgts.append([tgt_words])
+                assert len(tgt_words) == tgt.size(0)
+
+                tgts += tgt_words
 
         return running_loss / self.val_set_size, bleu_score(pred_tgts, tgts)
 
-    def rnn_translate(self, input_tensor, use_attention=False):
+    def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
         with torch.no_grad():
-            input_length = input_tensor.size()[0]
+            input_tensor = input_tensor.squeeze()
+            input_length = input_tensor.size(0)
 
             encoder_outputs = torch.zeros(utils.MAX_LENGTH,
                                           self.model.encoder.hidden_size,
                                           device=self.device)
 
-            # print(input_tensor.size())
             for ei in range(input_length):
                 encoder_output, encoder_hidden, cell = self.model.encoder(
                     input_tensor[ei].reshape((1, -1)))
@@ -135,9 +157,14 @@ class RNNTrainer(BaseTrainer):
                     break
 
                 decoder_input = topi.squeeze().detach()
-            decoded_words = " ".join(self.vocab_transform[
-                utils.tgt_lang].lookup_tokens(decoded_tokens)).replace(
-                    "<bos>", "").replace("<eos>", "")
+
+            decoded_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
+                decoded_tokens)
+            # correct_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
+            #     list(tgt_tensor.cpu().numpy()))
+            # print(decoded_words)
+            # print(correct_words)
+            # exit()
 
             return decoded_words, decoder_attentions[:di + 1]
 

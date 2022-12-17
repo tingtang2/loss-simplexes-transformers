@@ -61,10 +61,8 @@ class BaseTrainer(ABC):
         self.train_set_size = 29000
         self.val_set_size = 1014
 
-        self.test_sentence = [
-            'eine', 'frau', 'spielt', 'ein', 'lied', 'auf', 'ihrer', 'geige',
-            '.'
-        ]
+        self.test_sentence = 'eine frau spielt ein lied auf ihrer geige.'
+        self.real_sentence = 'a female playing a song on her violin.'
 
     def create_dataloaders(self):
         train_data = Multi30k(split='train',

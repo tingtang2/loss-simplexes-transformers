@@ -33,7 +33,7 @@ def main() -> int:
                         type=str,
                         help='cpu or gpu ID to use')
     parser.add_argument('--batch_size',
-                        default=128,
+                        default=32,
                         type=int,
                         help='mini-batch size used to train model')
     parser.add_argument('--dropout_prob',
