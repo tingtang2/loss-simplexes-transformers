@@ -20,7 +20,9 @@ class RNNTrainer(BaseTrainer):
         self.model = Seq2SeqLSTM(src_vocab_size=self.src_vocab_size,
                                  tgt_vocab_size=self.tgt_vocab_size,
                                  embed_size=self.embed_size,
-                                 hidden_size=self.hidden_size).to(self.device)
+                                 hidden_size=self.hidden_size,
+                                 dropout_prob=self.dropout_prob).to(
+                                     self.device)
 
         self.optimizer = self.optimizer_type(self.model.parameters(),
                                              lr=self.learning_rate)

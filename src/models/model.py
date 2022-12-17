@@ -89,7 +89,7 @@ class Seq2SeqTransformer(nn.Module):
 # RNN based networks
 class EncoderRNN(nn.Module):
 
-    def __init__(self, src_vocab_size, embed_size, hidden_size):
+    def __init__(self, src_vocab_size, embed_size, hidden_size, dropout_prob):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
@@ -99,11 +99,14 @@ class EncoderRNN(nn.Module):
                             batch_first=True)
         # bidirectional=True)
 
+        self.dropout = nn.Dropout(dropout_prob)
+
         # self.encoder_2_decoder = nn.Linear(2*hidden_size, hidden_size)
 
     def forward(self, inputs):
         batch_size, seq_len = inputs.size()
         src_emb = self.src_tok_emb(inputs).view(batch_size, seq_len, -1)
+        src_emb = self.dropout(src_emb)
 
         output, (hidden, cell) = self.lstm(src_emb)
         return output, hidden, cell
@@ -111,7 +114,8 @@ class EncoderRNN(nn.Module):
 
 class DecoderRNN(nn.Module):
 
-    def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size):
+    def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size,
+                 dropout_prob):
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
@@ -121,10 +125,13 @@ class DecoderRNN(nn.Module):
                             batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
 
+        self.dropout = nn.Dropout(dropout_prob)
+
     def forward(self, inputs, hidden, cell):
         batch_size, seq_len = inputs.size()
         inputs_embed = self.tgt_tok_emb(inputs).view(batch_size, seq_len, -1)
-        inputs_embed = F.relu(inputs_embed)
+        inputs_embed = F.relu(self.dropout(inputs_embed))
+
         output, (hidden, cell) = self.lstm(inputs_embed, (hidden, cell))
         output = self.out(output)
         return output, hidden, cell
@@ -132,20 +139,22 @@ class DecoderRNN(nn.Module):
 
 class Seq2SeqLSTM(nn.Module):
 
-    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size,
-                 hidden_size):
+    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size,
+                 dropout_prob):
         super(Seq2SeqLSTM, self).__init__()
 
         self.encoder = EncoderRNN(src_vocab_size=src_vocab_size,
                                   embed_size=embed_size,
-                                  hidden_size=hidden_size)
+                                  hidden_size=hidden_size,
+                                  dropout_prob=dropout_prob)
 
         self.decoder = DecoderRNN(tgt_vocab_size=tgt_vocab_size,
                                   embed_size=embed_size,
                                   hidden_size=hidden_size,
-                                  output_size=tgt_vocab_size)
+                                  output_size=tgt_vocab_size,
+                                  dropout_prob=dropout_prob)
 
-    def forward(self, src_tokens, tgt_tokens):
+    def forward(self, src_tokens, tgt_tokens, teacher_forcing_ratio=0.5):
         batch_size, seq_len = src_tokens.size()
         encoder_outputs, encoder_hidden, encoder_cell = self.encoder(
             src_tokens)
