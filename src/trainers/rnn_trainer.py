@@ -40,9 +40,9 @@ class RNNTrainer(BaseTrainer):
             train_loss = self.train_epoch(train_loader)
             end_time = timer()
 
-            val_loss, val_bleu = self.eval_epoch(val_loader)
+            val_loss = self.eval_epoch(val_loader)
             logging.info((
-                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}, Val BLEU score: {val_bleu:.3f} "
+                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}"
                 f"Epoch time = {(end_time - start_time):.3f}s"))
 
             example_sentence_tokenized = utils.text_transform[utils.src_lang](

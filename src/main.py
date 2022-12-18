@@ -81,7 +81,7 @@ def main() -> int:
                         type=float,
                         help='max norm of gradients to clip')
     parser.add_argument('--n_layers',
-                        default=2,
+                        default=3,
                         type=int,
                         help='number of lstm layers')
 
@@ -112,7 +112,7 @@ def main() -> int:
     #for iter in range(configs['num_repeats']):
     trainer.run_experiment()
     test_bleu = trainer.calc_test_bleu()
-    print('test bleu score:', test_bleu)
+    print(f'test bleu score: {100 * test_bleu:.2f}')
     logging.info(f'test bleu score: {test_bleu * 100:.2f}')
 
     # EMB_SIZE = 256
