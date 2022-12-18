@@ -231,6 +231,11 @@ class RNNTrainer(BaseTrainer):
         self.model.load_state_dict(
             torch.load(f'{self.save_dir}models/{self.name}.pt'))
 
+        use_attention = False
+
+        if self.name == 'seq2seq_attention_lstms':
+            use_attention = True
+
         self.model.eval()
         tgts = []
         pred_tgts = []
@@ -240,8 +245,10 @@ class RNNTrainer(BaseTrainer):
                 tgt = tgt.transpose(-1, -2).to(self.device)
 
                 for sentence in range(src.size(0)):
-                    pred_tgt, _ = self.rnn_translate(src[sentence],
-                                                     tgt[sentence])
+                    pred_tgt, _ = self.rnn_translate(
+                        src[sentence],
+                        tgt[sentence],
+                        use_attention=use_attention)
                     pred_tgts.append(pred_tgt)
 
                 # hack to remove <eos> <pad>
