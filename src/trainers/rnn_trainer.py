@@ -10,7 +10,7 @@ from torchtext.datasets import Multi30k
 from tqdm import trange
 
 import utils
-from models.model import Seq2SeqLSTM
+from models.model import Seq2SeqLSTM, AttentionSeq2SeqLSTM
 from models.subspace_models import Seq2SeqLSTMSubspace
 from trainers.base_trainer import BaseTrainer
 
@@ -177,10 +177,13 @@ class RNNTrainer(BaseTrainer):
 
             for di in range(utils.MAX_LENGTH):
                 if use_attention:
+                    mask = self.model.create_mask(input_tensor)
                     decoder_output, decoder_hidden, cell, decoder_attention = self.model.decoder(
-                        decoder_input, decoder_hidden, cell, encoder_outputs)
+                        decoder_input.reshape((1, -1)), decoder_hidden, cell,
+                        encoder_outputs, mask)
 
-                    decoder_attentions[di] = decoder_attention.data
+                    #TODO: pad this
+                    # decoder_attentions[di] = decoder_attention
                 else:
                     if self.name == 'seq2seq_vanilla_lstms_subspace':
                         decoder_output, decoder_hidden, cell = self.model.decode(
@@ -204,6 +207,11 @@ class RNNTrainer(BaseTrainer):
             return decoded_words[:-1], decoder_attentions[:di + 1]
 
     def evaluate_randomly(self, src_tokens, tgt_tokens):
+        use_attention = False
+
+        if self.name == 'seq2seq_attention_lstms':
+            use_attention = True
+
         src_words = self.vocab_transform[utils.src_lang].lookup_tokens(
             list(src_tokens.detach().cpu().numpy()))
         tgt_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
@@ -211,8 +219,10 @@ class RNNTrainer(BaseTrainer):
 
         logging.info(f'> {" ".join(src_words)}')
         logging.info(f'= {" ".join(tgt_words)}')
-        output_words, attentions = self.rnn_translate(input_tensor=src_tokens,
-                                                      tgt_tensor=None)
+        output_words, attentions = self.rnn_translate(
+            input_tensor=src_tokens,
+            tgt_tensor=None,
+            use_attention=use_attention)
         output_sentence = ' '.join(output_words)
         logging.info(f'< {output_sentence}')
 
@@ -464,3 +474,23 @@ class SubspaceRNNTrainer(RNNTrainer):
         self.save_metrics(bleu_scores, name=f'{self.name}_test_bleu_scores')
 
         return max(bleu_scores)
+
+
+class AttentionRNNTrainer(RNNTrainer):
+
+    def __init__(self, **kwargs) -> None:
+        super(AttentionRNNTrainer, self).__init__(**kwargs)
+
+        self.model = AttentionSeq2SeqLSTM(src_vocab_size=self.src_vocab_size,
+                                          tgt_vocab_size=self.tgt_vocab_size,
+                                          embed_size=self.embed_size,
+                                          hidden_size=self.hidden_size,
+                                          dropout_prob=self.dropout_prob,
+                                          device=self.device,
+                                          n_layers=self.n_layers).to(
+                                              self.device)
+
+        self.optimizer = self.optimizer_type(self.model.parameters(),
+                                             lr=self.learning_rate)
+
+        self.name = 'seq2seq_attention_lstms'

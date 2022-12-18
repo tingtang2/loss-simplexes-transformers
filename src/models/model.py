@@ -1,4 +1,5 @@
-# code adapted from https://pytorch.org/tutorials/beginner/translation_transformer.html
+# code adapted from https://pytorch.org/tutorials/beginner/translation_transformer.html and
+# https://github.com/bentrevett/pytorch-seq2seq/blob/master/4%20-%20Packed%20Padded%20Sequences%2C%20Masking%2C%20Inference%20and%20BLEU.ipynb
 
 import torch
 from torch import nn, Tensor
@@ -203,22 +204,29 @@ class Seq2SeqLSTM(nn.Module):
 
 class Attention(nn.Module):
 
-    def __init__(self, enc_hid_dim, dec_hid_dim):
+    def __init__(self, enc_hid_dim, dec_hid_dim, n_layers):
         super(Attention, self).__init__()
 
-        self.attn = nn.Linear((enc_hid_dim * 2) + dec_hid_dim, dec_hid_dim)
+        self.attn = nn.Linear(enc_hid_dim + dec_hid_dim, dec_hid_dim)
         self.v = nn.Linear(dec_hid_dim, 1, bias=False)
+
+        self.coalesce_layers = nn.Linear(n_layers, 1)
 
     def forward(self, hidden, encoder_outputs, mask):
 
-        #hidden = [batch size, dec hid dim]
+        #hidden = [n layers, batch size, dec hid dim]
         #encoder_outputs = [batch size, src len, enc hid dim]
 
         batch_size = encoder_outputs.shape[0]
+        hid_dim = encoder_outputs.shape[-1]
         src_len = encoder_outputs.shape[1]
 
         #repeat decoder hidden state src_len times
-        hidden = hidden.unsqueeze(1).repeat(1, src_len, 1)
+        hidden = F.relu(
+            self.coalesce_layers(hidden.reshape(batch_size, hid_dim, -1)))
+
+        hidden = hidden.transpose(-1, -2)
+        hidden = hidden.repeat(1, src_len, 1)
 
         #hidden = [batch size, src len, dec hid dim]
         #encoder_outputs = [batch size, src len, enc hid dim]
@@ -240,25 +248,108 @@ class Attention(nn.Module):
 class AttentionDecoderRNN(nn.Module):
 
     def __init__(self, tgt_vocab_size, embed_size, hidden_size, output_size,
-                 dropout_prob):
-        super(DecoderRNN, self).__init__()
+                 dropout_prob, n_layers):
+        super(AttentionDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
 
         self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, embed_size)
-        self.lstm = nn.LSTM(input_size=embed_size,
+        self.lstm = nn.LSTM(input_size=hidden_size + embed_size,
                             hidden_size=hidden_size,
-                            batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
+                            batch_first=True,
+                            num_layers=n_layers)
+        self.out = nn.Linear(hidden_size + hidden_size + embed_size,
+                             output_size)
 
         self.dropout = nn.Dropout(dropout_prob)
         self.attention = Attention(enc_hid_dim=hidden_size,
-                                   dec_hid_dim=hidden_size)
+                                   dec_hid_dim=hidden_size,
+                                   n_layers=n_layers)
 
-    def forward(self, inputs, hidden, cell):
+    def forward(self, inputs, hidden, cell, encoder_outputs, mask):
         batch_size, seq_len = inputs.size()
+
+        # compute inputs embeds
         inputs_embed = self.tgt_tok_emb(inputs).view(batch_size, seq_len, -1)
         inputs_embed = F.relu(self.dropout(inputs_embed))
 
-        output, (hidden, cell) = self.lstm(inputs_embed, (hidden, cell))
-        output = self.out(output)
-        return output, hidden, cell
+        # compute attention
+        attention_vals = self.attention(hidden, encoder_outputs, mask)
+
+        #a = [batch size, 1, src len]
+        attention_vals = attention_vals.unsqueeze(1)
+
+        weighted_encoder_outputs = attention_vals @ encoder_outputs
+
+        rnn_input = torch.cat((inputs_embed, weighted_encoder_outputs), dim=-1)
+
+        output, (hidden, cell) = self.lstm(rnn_input, (hidden, cell))
+
+        # print('output size', output.size())
+        # print('weighted size', weighted_encoder_outputs.size())
+        # print('inputs size', inputs_embed.size())
+        output = self.out(
+            torch.cat((output, weighted_encoder_outputs, inputs_embed),
+                      dim=-1))
+        return output, hidden, cell, attention_vals.squeeze()
+
+
+class AttentionSeq2SeqLSTM(nn.Module):
+
+    def __init__(self, src_vocab_size, tgt_vocab_size, embed_size, hidden_size,
+                 dropout_prob, device, n_layers):
+        super(AttentionSeq2SeqLSTM, self).__init__()
+
+        self.src_vocab_size = src_vocab_size
+        self.tgt_vocab_size = tgt_vocab_size
+
+        self.encoder = EncoderRNN(src_vocab_size=src_vocab_size,
+                                  embed_size=embed_size,
+                                  hidden_size=hidden_size,
+                                  dropout_prob=dropout_prob,
+                                  n_layers=n_layers)
+
+        self.decoder = AttentionDecoderRNN(tgt_vocab_size=tgt_vocab_size,
+                                           embed_size=embed_size,
+                                           hidden_size=hidden_size,
+                                           output_size=tgt_vocab_size,
+                                           dropout_prob=dropout_prob,
+                                           n_layers=n_layers)
+
+        self.device = device
+
+    def create_mask(self, src_tokens):
+        return src_tokens != utils.PAD_IDX
+
+    def forward(self, src_tokens, tgt_tokens, teacher_forcing_ratio=0.5):
+        batch_size, src_len = src_tokens.size()
+        tgt_len = tgt_tokens.size(1)
+
+        # tensor to store decoder outputs
+        decoder_outputs = torch.zeros(batch_size, tgt_len,
+                                      self.tgt_vocab_size).to(self.device)
+        decoder_outputs[:, 0] = utils.BOS_IDX  # set first output to BOS
+
+        encoder_outputs, encoder_hidden, encoder_cell = self.encoder(
+            src_tokens)
+
+        decoder_input = tgt_tokens[:, 0].reshape(batch_size, 1)  # BOS token
+        decoder_hidden = encoder_hidden
+        decoder_cell = encoder_cell
+
+        # create mask for attention
+        mask = self.create_mask(src_tokens)
+
+        for i in range(1, tgt_len):
+            decoder_output, decoder_hidden, decoder_cell, attention = self.decoder(
+                decoder_input, decoder_hidden, decoder_cell, encoder_outputs,
+                mask)
+
+            decoder_outputs[:, i] = decoder_output.squeeze()
+
+            teacher_force = random.random() < teacher_forcing_ratio
+            top_pred_token = decoder_output.argmax(-1).reshape(batch_size, 1)
+
+            decoder_input = tgt_tokens[:, i].reshape(
+                batch_size, 1) if teacher_force else top_pred_token.detach()
+
+        return decoder_outputs, decoder_hidden, decoder_cell

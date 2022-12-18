@@ -9,9 +9,13 @@ from torch import nn
 from torch.optim import Adam, AdamW
 
 import utils
-from trainers.rnn_trainer import RNNTrainer, SubspaceRNNTrainer
+from trainers.rnn_trainer import RNNTrainer, SubspaceRNNTrainer, AttentionRNNTrainer
 
-arg_trainer_map = {'rnn': RNNTrainer, 'subspace_rnn': SubspaceRNNTrainer}
+arg_trainer_map = {
+    'rnn': RNNTrainer,
+    'subspace_rnn': SubspaceRNNTrainer,
+    'attention_rnn': AttentionRNNTrainer
+}
 arg_optimizer_map = {'adamw': AdamW, 'adam': Adam}
 
 
@@ -127,32 +131,6 @@ def main() -> int:
     # NUM_DECODER_LAYERS = 3
     # NUM_EPOCHS = 18
 
-    # if configs['model_type'] == 'rnn_subspace':
-    #     model = Seq2SeqLSTMSubspace(SRC_VOCAB_SIZE, TGT_VOCAB_SIZE, EMB_SIZE,
-    #                                 EMB_SIZE).to(device)
-    #     for m in model.modules():
-    #         if hasattr(m, 'initialize'):
-    #             m.initialize(self.seed)
-
-    #     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-    #     optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, amsgrad=True)
-
-    #     # training loop
-    #     for epoch in tqdm(range(1, NUM_EPOCHS + 1)):
-    #         start_time = timer()
-    #         train_loss = train_epoch_rnn_subspace(train_data, model, optimizer,
-    #                                               criterion, device,
-    #                                               BATCH_SIZE, **configs)
-    #         end_time = timer()
-    #         val_losses = evaluate_rnn_subspace(val_data, model, criterion,
-    #                                            device, BATCH_SIZE)
-    #         print(
-    #             f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_losses[0]:.3f}, Val loss alpha 0.5: {val_losses[1]:.3f}, Val loss alpha 1: {val_losses[2]:.3f}, "
-    #             f"Epoch time = {(end_time - start_time):.3f}s")
-
-    #     # save model
-    #     save_path = f'{configs["save_dir"]}subspace_rnn.pt'
-    #     torch.save(model.state_dict(), save_path)
     return 0
 
 
