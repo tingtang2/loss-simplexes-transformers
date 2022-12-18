@@ -5,13 +5,11 @@ from pathlib import Path
 from typing import List, Union
 
 import torch
+from torch.utils.data import DataLoader
 from torchtext.datasets import Multi30k
 
 import utils
-
 from data import get_vocabs
-
-from torch.utils.data import DataLoader
 
 
 class BaseTrainer(ABC):

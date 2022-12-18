@@ -9,8 +9,11 @@ from tqdm import trange
 
 import utils
 from models.model import Seq2SeqLSTM
+from models.subspace_models import Seq2SeqLSTMSubspace
 from trainers.base_trainer import BaseTrainer
 from torchtext.datasets import Multi30k
+
+from torch import nn
 
 
 class RNNTrainer(BaseTrainer):
@@ -41,24 +44,31 @@ class RNNTrainer(BaseTrainer):
             end_time = timer()
 
             val_loss = self.eval_epoch(val_loader)
-            logging.info((
-                f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f}"
-                f"Epoch time = {(end_time - start_time):.3f}s"))
-
-            example_sentence_tokenized = utils.text_transform[utils.src_lang](
-                self.test_sentence.rstrip("\n"))
-            with torch.no_grad():
-                output_tokens, _ = self.rnn_translate(
-                    example_sentence_tokenized.to(self.device), None)
-
-            translated_sentence = " ".join(output_tokens).replace(
-                "<bos>", "").replace("<eos>", "")
-
-            logging.info(
-                f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
-            )
+            if self.name == 'seq2seq_vanilla_lstms_subspace':
+                logging.info(
+                    f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_loss[0]:.3f}, Val loss alpha 0.5: {val_loss[1]:.3f}, Val loss alpha 1: {val_loss[2]:.3f}, "
+                    f"Epoch time = {(end_time - start_time):.3f}s")
+            else:
+                logging.info((
+                    f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f} "
+                    f"Epoch time = {(end_time - start_time):.3f}s"))
 
         self.save_model(self.name)
+
+    def run_test_sentence(self):
+        example_sentence_tokenized = utils.text_transform[utils.src_lang](
+            self.test_sentence.rstrip("\n"))
+        with torch.no_grad():
+            output_tokens, _ = self.rnn_translate(
+                example_sentence_tokenized.to(self.device), None)
+
+        translated_sentence = " ".join(output_tokens).replace("<bos>",
+                                                              "").replace(
+                                                                  "<eos>", "")
+
+        logging.info(
+            f'test sentence: {self.test_sentence}, translated sentence: {translated_sentence}'
+        )
 
     def train_epoch(self, loader: DataLoader):
         self.model.train()
@@ -118,11 +128,22 @@ class RNNTrainer(BaseTrainer):
 
     def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
         self.model.eval()
+        if self.name == 'seq2seq_vanilla_lstms_subspace':
+            alpha = 0.5
+            for m in self.model.modules():
+                if isinstance(m, nn.Linear) or isinstance(
+                        m, nn.LSTM) or isinstance(m, nn.Embedding):
+                    setattr(m, f'alpha', alpha)
+
         with torch.no_grad():
             input_length = input_tensor.size(0)
 
-            encoder_outputs, encoder_hidden, cell = self.model.encoder(
-                input_tensor.reshape((1, -1)))
+            if self.name == 'seq2seq_vanilla_lstms_subspace':
+                encoder_outputs, encoder_hidden, cell = self.model.encode(
+                    input_tensor.reshape((1, -1)))
+            else:
+                encoder_outputs, encoder_hidden, cell = self.model.encoder(
+                    input_tensor.reshape((1, -1)))
 
             decoder_input = torch.tensor([[utils.BOS_IDX]],
                                          device=self.device)  #BOS
@@ -140,8 +161,14 @@ class RNNTrainer(BaseTrainer):
 
                     decoder_attentions[di] = decoder_attention.data
                 else:
-                    decoder_output, decoder_hidden, cell = self.model.decoder(
-                        decoder_input.reshape((1, -1)), decoder_hidden, cell)
+                    if self.name == 'seq2seq_vanilla_lstms_subspace':
+                        decoder_output, decoder_hidden, cell = self.model.decode(
+                            decoder_input.reshape((1, -1)), decoder_hidden,
+                            cell)
+                    else:
+                        decoder_output, decoder_hidden, cell = self.model.decoder(
+                            decoder_input.reshape((1, -1)), decoder_hidden,
+                            cell)
 
                 top_pred_token = decoder_output.argmax(-1)
                 decoded_tokens.append(top_pred_token.item())
@@ -205,126 +232,121 @@ class RNNTrainer(BaseTrainer):
         return bleu_score(pred_tgts, tgts)
 
 
-# subspace functions
-##################################################################################################
+class SubspaceRNNTrainer(RNNTrainer):
 
-# def get_weight(m, i):
-#     if i == 0:
-#         return m.weight
-#     return getattr(m, f'weight_{i}')
+    def __init__(self, **kwargs) -> None:
+        super(SubspaceRNNTrainer, self).__init__(**kwargs)
 
-# def train_epoch_rnn_subspace(dataset, model, optimizer, criterion, device,
-#                              batch_size, beta, **kwargs):
-#     model.train()
-#     running_loss = 0
+        self.model = Seq2SeqLSTMSubspace(src_vocab_size=self.src_vocab_size,
+                                         tgt_vocab_size=self.tgt_vocab_size,
+                                         embed_size=self.embed_size,
+                                         hidden_size=self.hidden_size,
+                                         dropout_prob=self.dropout_prob,
+                                         device=self.device,
+                                         n_layers=self.n_layers,
+                                         seed=self.seed).to(self.device)
 
-#     train_dataloader = DataLoader(dataset,
-#                                   batch_size=batch_size,
-#                                   collate_fn=collate_fn)
+        self.optimizer = self.optimizer_type(self.model.parameters(),
+                                             lr=self.learning_rate)
 
-#     for src, tgt in train_dataloader:
-#         src = src.transpose(-1, -2).to(device)
-#         tgt = tgt.transpose(-1, -2).to(device)
+        self.name = 'seq2seq_vanilla_lstms_subspace'
 
-#         alpha = torch.rand(1, device=device)
-#         for m in model.modules():
-#             if isinstance(m, nn.Linear) or isinstance(
-#                     m, nn.LSTM) or isinstance(m, nn.Embedding):
-#                 setattr(m, f'alpha', alpha)
+    def get_weight(self, m, i):
+        if i == 0:
+            return m.weight
+        return getattr(m, f'weight_{i}')
 
-#         optimizer.zero_grad()
-#         decoder_output = model(src, tgt[:, :-1])
-#         loss = criterion(decoder_output.reshape(-1, decoder_output.size(-1)),
-#                          tgt[:, 1:].reshape(-1))
+    def train_epoch(self, loader: DataLoader):
+        self.model.train()
+        running_loss = 0
 
-#         # regularization
-#         num = 0.0
-#         norm = 0.0
-#         norm1 = 0.0
-#         for m in model.modules():
-#             if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
-#                 vi = get_weight(m, 0)
-#                 vj = get_weight(m, 1)
-#                 num += (vi * vj).sum()
-#                 norm += vi.pow(2).sum()
-#                 norm1 += vj.pow(2).sum()
-#             if isinstance(m, nn.LSTM):
-#                 w_ih_i = getattr(m, 'weight_ih_l0')
-#                 w_ih_j = getattr(m, 'weight_ih_l0_1')
+        for src, tgt in loader:
+            src = src.transpose(-1, -2).to(self.device)
+            tgt = tgt.transpose(-1, -2).to(self.device)
 
-#                 num += (w_ih_i * w_ih_j).sum()
-#                 norm += w_ih_i.pow(2).sum()
-#                 norm1 += w_ih_j.pow(2).sum()
+            alpha = torch.rand(1, device=self.device)
+            for m in self.model.modules():
+                if isinstance(m, nn.Linear) or isinstance(
+                        m, nn.LSTM) or isinstance(m, nn.Embedding):
+                    setattr(m, f'alpha', alpha)
 
-#                 w_hh_i = getattr(m, 'weight_hh_l0')
-#                 w_hh_j = getattr(m, 'weight_hh_l0_1')
+            self.optimizer.zero_grad()
+            decoder_output, decoder_hidden, decoder_cell = self.model(src, tgt)
 
-#                 num += (w_hh_i * w_hh_j).sum()
-#                 norm += w_hh_i.pow(2).sum()
-#                 norm1 += w_hh_j.pow(2).sum()
+            output_for_loss = decoder_output[:, 1:].reshape(
+                -1, decoder_output.size(-1))
+            tgt_for_loss = tgt[:, 1:].reshape(-1)
 
-#         loss += beta * (num.pow(2) / (norm * norm1))
+            loss = self.criterion(output_for_loss, tgt_for_loss)
 
-#         loss.backward()
+            # regularization
+            num = 0.0
+            norm = 0.0
+            norm1 = 0.0
+            for m in self.model.modules():
+                if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
+                    vi = self.get_weight(m, 0)
+                    vj = self.get_weight(m, 1)
 
-#         optimizer.step()
-#         running_loss += loss.item()
+                    num += (vi * vj).sum()
+                    norm += vi.pow(2).sum()
+                    norm1 += vj.pow(2).sum()
+                if isinstance(m, nn.LSTM):
+                    for layer_num in range(self.n_layers):
+                        w_ih_i = getattr(m, f'weight_ih_l{layer_num}')
+                        w_ih_j = getattr(m, f'weight_ih_l{layer_num}_1')
 
-#     return running_loss / 29000
+                        num += (w_ih_i * w_ih_j).sum()
+                        norm += w_ih_i.pow(2).sum()
+                        norm1 += w_ih_j.pow(2).sum()
 
-# def evaluate_rnn_subspace(dataset, model, criterion, device, batch_size,
-#                           **kwargs):
-#     model.eval()
-#     running_losses = [0, 0, 0]
+                        w_hh_i = getattr(m, f'weight_hh_l{layer_num}')
+                        w_hh_j = getattr(m, f'weight_hh_l{layer_num}_1')
 
-#     eval_dataloader = DataLoader(dataset,
-#                                  batch_size=batch_size,
-#                                  collate_fn=collate_fn)
-#     alphas = [0.0, 0.5, 1.0]
-#     tgts = []
-#     pred_tgts = []
-#     for i, alpha in enumerate(alphas):
-#         for m in model.modules():
-#             if isinstance(m, nn.Linear) or isinstance(
-#                     m, nn.LSTM) or isinstance(m, nn.Embedding):
-#                 setattr(m, f'alpha', alpha)
+                        num += (w_hh_i * w_hh_j).sum()
+                        norm += w_hh_i.pow(2).sum()
+                        norm1 += w_hh_j.pow(2).sum()
 
-#         with torch.no_grad():
-#             for src, tgt in eval_dataloader:
-#                 src = src.transpose(-1, -2).to(device)
-#                 tgt = tgt.transpose(-1, -2).to(device)
+            loss += self.beta * (num.pow(2) / (norm * norm1))
+            loss.backward()
 
-#                 decoder_output = model(src, tgt[:, :-1])
-#                 loss = criterion(
-#                     decoder_output.reshape(-1, decoder_output.size(-1)),
-#                     tgt[:, 1:].reshape(-1))
+            if self.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                               self.grad_clip)
 
-#                 running_losses[i] += loss.item()
-#                 pred_trg = pred_trg[:-1]
+            self.optimizer.step()
+            running_loss += loss.item()
 
-#                 pred_tgts.append(pred_trg)
-#                 tgts.append([tgt])
+        return running_loss
 
-#     return [loss / 1014
-#             for loss in running_losses], bleu_score(pred_tgts, tgts)
+    def eval_epoch(self, loader: DataLoader):
+        self.model.eval()
 
-# def calculate_bleu(data, src_field, trg_field, model, device, max_len=50):
+        running_losses = [0.0, 0.0, 0.0]
+        random_iteration = random.randint(0, 7)
+        alphas = [0.0, 0.5, 1.0]
 
-#     trgs = []
-#     pred_trgs = []
+        for i, alpha in enumerate(alphas):
+            for m in self.model.modules():
+                if isinstance(m, nn.Linear) or isinstance(
+                        m, nn.LSTM) or isinstance(m, nn.Embedding):
+                    setattr(m, f'alpha', alpha)
 
-#     for datum in data:
+            with torch.no_grad():
+                for j, (src, tgt) in enumerate(loader):
+                    src = src.transpose(-1, -2).to(self.device)
+                    tgt = tgt.transpose(-1, -2).to(self.device)
 
-#         src = vars(datum)['src']
-#         trg = vars(datum)['trg']
+                    decoder_output, decoder_hidden, decoder_cell = self.model(
+                        src, tgt, teacher_forcing_ratio=0)
+                    output_for_loss = decoder_output[:, 1:].reshape(
+                        -1, decoder_output.size(-1))
+                    tgt_for_loss = tgt[:, 1:].reshape(-1)
+                    loss = self.criterion(output_for_loss, tgt_for_loss)
 
-#         pred_trg, _ = translate_sentence(src, src_field, trg_field, model,
-#                                          device, max_len)
+                    running_losses[i] += loss.item()
+                    if j == random_iteration and i == 0:
+                        self.evaluate_randomly(src_tokens=src[0, :],
+                                               tgt_tokens=tgt[0, :])
 
-#         #cut off  token
-#         pred_trg = pred_trg[:-1]
-
-#         pred_trgs.append(pred_trg)
-#         trgs.append([trg])
-
-#     return bleu_score(pred_trgs, trgs)
+        return running_losses
