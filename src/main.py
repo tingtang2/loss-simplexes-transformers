@@ -9,12 +9,13 @@ from torch import nn
 from torch.optim import Adam, AdamW
 
 import utils
-from trainers.rnn_trainer import RNNTrainer, SubspaceRNNTrainer, AttentionRNNTrainer
+from trainers.rnn_trainer import RNNTrainer, SubspaceRNNTrainer, AttentionRNNTrainer, SubspaceAttentionRNNTrainer
 
 arg_trainer_map = {
     'rnn': RNNTrainer,
     'subspace_rnn': SubspaceRNNTrainer,
-    'attention_rnn': AttentionRNNTrainer
+    'attention_rnn': AttentionRNNTrainer,
+    'subspace_attention_rnn': SubspaceAttentionRNNTrainer
 }
 arg_optimizer_map = {'adamw': AdamW, 'adam': Adam}
 

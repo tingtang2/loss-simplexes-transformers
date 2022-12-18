@@ -11,7 +11,7 @@ from tqdm import trange
 
 import utils
 from models.model import Seq2SeqLSTM, AttentionSeq2SeqLSTM
-from models.subspace_models import Seq2SeqLSTMSubspace
+from models.subspace_models import Seq2SeqLSTMSubspace, AttentionSeq2SeqLSTMSubspace
 from trainers.base_trainer import BaseTrainer
 
 from tqdm import tqdm
@@ -50,7 +50,7 @@ class RNNTrainer(BaseTrainer):
             train_loss = self.train_epoch(train_loader)
             end_time = timer()
 
-            if self.name == 'seq2seq_vanilla_lstms_subspace':
+            if 'subspace' in self.name:
                 val_loss, cos_sim, l2 = self.eval_epoch(val_loader)
                 l2s.append(l2)
                 cos_sims.append(cos_sim)
@@ -78,7 +78,7 @@ class RNNTrainer(BaseTrainer):
             if early_stopping_counter == self.early_stopping_threshold:
                 break
 
-        if self.name == 'seq2seq_vanilla_lstms_subspace':
+        if 'subspace' in self.name:
             self.save_metrics(cos_sims, name=f'{self.name}_cossims')
             self.save_metrics(l2s, name=f'{self.name}_l2s')
 
@@ -159,7 +159,7 @@ class RNNTrainer(BaseTrainer):
         with torch.no_grad():
             input_length = input_tensor.size(0)
 
-            if self.name == 'seq2seq_vanilla_lstms_subspace':
+            if 'subspace' in self.name:
                 encoder_outputs, encoder_hidden, cell = self.model.encode(
                     input_tensor.reshape((1, -1)))
             else:
@@ -185,7 +185,7 @@ class RNNTrainer(BaseTrainer):
                     #TODO: pad this
                     # decoder_attentions[di] = decoder_attention
                 else:
-                    if self.name == 'seq2seq_vanilla_lstms_subspace':
+                    if 'subspace' in self.name:
                         decoder_output, decoder_hidden, cell = self.model.decode(
                             decoder_input.reshape((1, -1)), decoder_hidden,
                             cell)
@@ -209,7 +209,7 @@ class RNNTrainer(BaseTrainer):
     def evaluate_randomly(self, src_tokens, tgt_tokens):
         use_attention = False
 
-        if self.name == 'seq2seq_attention_lstms':
+        if 'attention' in self.name:
             use_attention = True
 
         src_words = self.vocab_transform[utils.src_lang].lookup_tokens(
@@ -233,7 +233,7 @@ class RNNTrainer(BaseTrainer):
 
         use_attention = False
 
-        if self.name == 'seq2seq_attention_lstms':
+        if 'attention' in self.name:
             use_attention = True
 
         self.model.eval()
@@ -501,3 +501,24 @@ class AttentionRNNTrainer(RNNTrainer):
                                              lr=self.learning_rate)
 
         self.name = 'seq2seq_attention_lstms'
+
+
+class SubspaceAttentionRNNTrainer(SubspaceRNNTrainer):
+
+    def __init__(self, **kwargs) -> None:
+        super(SubspaceAttentionRNNTrainer, self).__init__(**kwargs)
+
+        self.model = AttentionSeq2SeqLSTMSubspace(
+            src_vocab_size=self.src_vocab_size,
+            tgt_vocab_size=self.tgt_vocab_size,
+            embed_size=self.embed_size,
+            hidden_size=self.hidden_size,
+            dropout_prob=self.dropout_prob,
+            device=self.device,
+            n_layers=self.n_layers,
+            seed=self.seed).to(self.device)
+
+        self.optimizer = self.optimizer_type(self.model.parameters(),
+                                             lr=self.learning_rate)
+
+        self.name = 'seq2seq_attention_lstms_subspace'
