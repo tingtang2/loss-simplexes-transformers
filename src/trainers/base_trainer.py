@@ -89,7 +89,7 @@ class BaseTrainer(ABC):
     def save_model(self, name: str):
         torch.save(self.model.state_dict(), f'{self.save_dir}models/{name}.pt')
 
-    def save_metrics(self, metrics: List[float], name: str, phase: str):
-        save_name = f'{name}_{phase}.json'
+    def save_metrics(self, metrics: List[float], name: str):
+        save_name = f'{name}.json'
         with open(Path(self.save_dir, 'metrics', save_name), 'w') as f:
             json.dump(metrics, f)

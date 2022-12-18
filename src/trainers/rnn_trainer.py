@@ -3,17 +3,18 @@ import random
 from timeit import default_timer as timer
 
 import torch
+from torch import nn
 from torch.utils.data import DataLoader
 from torchtext.data.metrics import bleu_score
+from torchtext.datasets import Multi30k
 from tqdm import trange
 
 import utils
 from models.model import Seq2SeqLSTM
 from models.subspace_models import Seq2SeqLSTMSubspace
 from trainers.base_trainer import BaseTrainer
-from torchtext.datasets import Multi30k
 
-from torch import nn
+from tqdm import tqdm
 
 
 class RNNTrainer(BaseTrainer):
@@ -34,26 +35,48 @@ class RNNTrainer(BaseTrainer):
 
         self.name = 'seq2seq_vanilla_lstms'
 
+        self.early_stopping_threshold = 10
+
     def run_experiment(self):
         train_loader, val_loader = self.create_dataloaders()
 
         # training loop
+        cos_sims = []
+        l2s = []
+        best_val_loss = 1e+5
+        early_stopping_counter = 0
         for epoch in trange(1, self.epochs + 1):
             start_time = timer()
             train_loss = self.train_epoch(train_loader)
             end_time = timer()
 
-            val_loss = self.eval_epoch(val_loader)
             if self.name == 'seq2seq_vanilla_lstms_subspace':
+                val_loss, cos_sim, l2 = self.eval_epoch(val_loader)
+                l2s.append(l2)
+                cos_sims.append(cos_sim)
                 logging.info(
                     f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_loss[0]:.3f}, Val loss alpha 0.5: {val_loss[1]:.3f}, Val loss alpha 1: {val_loss[2]:.3f}, "
-                    f"Epoch time = {(end_time - start_time):.3f}s")
+                    f"Epoch time = {(end_time - start_time):.3f}s, cos sim: {cos_sim}, l2: {l2}"
+                )
+                val_loss = val_loss[1]
             else:
+                val_loss = self.eval_epoch(val_loader)
                 logging.info((
                     f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss: {val_loss:.3f} "
                     f"Epoch time = {(end_time - start_time):.3f}s"))
 
-        self.save_model(self.name)
+            if val_loss < best_val_loss:
+                self.save_model(self.name)
+                early_stopping_counter = 0
+            else:
+                early_stopping_counter += 1
+
+            if early_stopping_counter == self.early_stopping_threshold:
+                break
+
+        if self.name == 'seq2seq_vanilla_lstms_subspace':
+            self.save_metrics(cos_sims, name=f'{self.name}_cossims')
+            self.save_metrics(l2s, name=f'{self.name}_l2s')
 
     def run_test_sentence(self):
         example_sentence_tokenized = utils.text_transform[utils.src_lang](
@@ -128,12 +151,6 @@ class RNNTrainer(BaseTrainer):
 
     def rnn_translate(self, input_tensor, tgt_tensor, use_attention=False):
         self.model.eval()
-        if self.name == 'seq2seq_vanilla_lstms_subspace':
-            alpha = 0.5
-            for m in self.model.modules():
-                if isinstance(m, nn.Linear) or isinstance(
-                        m, nn.LSTM) or isinstance(m, nn.Embedding):
-                    setattr(m, f'alpha', alpha)
 
         with torch.no_grad():
             input_length = input_tensor.size(0)
@@ -196,15 +213,9 @@ class RNNTrainer(BaseTrainer):
         logging.info(f'< {output_sentence}')
 
     def calc_test_bleu(self):
-        test_data = Multi30k(split='test',
-                             language_pair=(utils.src_lang, utils.tgt_lang))
+        loader = self.create_test_loader()
         self.model.load_state_dict(
             torch.load(f'{self.save_dir}models/{self.name}.pt'))
-
-        loader = torch.utils.data.DataLoader(test_data,
-                                             batch_size=self.batch_size,
-                                             collate_fn=utils.collate_fn,
-                                             shuffle=False)
 
         self.model.eval()
         tgts = []
@@ -230,6 +241,17 @@ class RNNTrainer(BaseTrainer):
 
                 tgts += tgt_words
         return bleu_score(pred_tgts, tgts)
+
+    def create_test_loader(self):
+        test_data = Multi30k(split='test',
+                             language_pair=(utils.src_lang, utils.tgt_lang))
+
+        loader = torch.utils.data.DataLoader(test_data,
+                                             batch_size=self.batch_size,
+                                             collate_fn=utils.collate_fn,
+                                             shuffle=False)
+
+        return loader
 
 
 class SubspaceRNNTrainer(RNNTrainer):
@@ -332,6 +354,7 @@ class SubspaceRNNTrainer(RNNTrainer):
                         m, nn.LSTM) or isinstance(m, nn.Embedding):
                     setattr(m, f'alpha', alpha)
 
+            # compute losses
             with torch.no_grad():
                 for j, (src, tgt) in enumerate(loader):
                     src = src.transpose(-1, -2).to(self.device)
@@ -349,4 +372,88 @@ class SubspaceRNNTrainer(RNNTrainer):
                         self.evaluate_randomly(src_tokens=src[0, :],
                                                tgt_tokens=tgt[0, :])
 
-        return running_losses
+        # compute l2 and cos sim
+        num = 0.0
+        norm = 0.0
+        norm1 = 0.0
+
+        total_l2 = 0.0
+
+        for m in self.model.modules():
+            if isinstance(m, nn.Linear) or isinstance(m, nn.Embedding):
+                vi = self.get_weight(m, 0)
+                vj = self.get_weight(m, 1)
+
+                num += (vi * vj).sum()
+                norm += vi.pow(2).sum()
+                norm1 += vj.pow(2).sum()
+
+                total_l2 += (vi - vj).pow(2).sum()
+            if isinstance(m, nn.LSTM):
+                for layer_num in range(self.n_layers):
+                    w_ih_i = getattr(m, f'weight_ih_l{layer_num}')
+                    w_ih_j = getattr(m, f'weight_ih_l{layer_num}_1')
+
+                    num += (w_ih_i * w_ih_j).sum()
+                    norm += w_ih_i.pow(2).sum()
+                    norm1 += w_ih_j.pow(2).sum()
+
+                    total_l2 += (w_ih_i - w_ih_j).pow(2).sum()
+
+                    w_hh_i = getattr(m, f'weight_hh_l{layer_num}')
+                    w_hh_j = getattr(m, f'weight_hh_l{layer_num}_1')
+
+                    total_l2 += (w_hh_i - w_hh_j).pow(2).sum()
+
+                    num += (w_hh_i * w_hh_j).sum()
+                    norm += w_hh_i.pow(2).sum()
+                    norm1 += w_hh_j.pow(2).sum()
+
+        total_cosim = num.pow(2) / (norm * norm1)
+        total_l2 = total_l2.sqrt()
+
+        return running_losses, total_cosim.item(), total_l2.item()
+
+    def calc_test_bleu(self):
+        loader = self.create_test_loader()
+
+        self.model.load_state_dict(
+            torch.load(f'{self.save_dir}models/{self.name}.pt'))
+        self.model.eval()
+
+        alphas = [i / 10 for i in range(0, 11)]
+        bleu_scores = []
+
+        for i, alpha in enumerate(tqdm(alphas)):
+            for m in self.model.modules():
+                if isinstance(m, nn.Linear) or isinstance(
+                        m, nn.LSTM) or isinstance(m, nn.Embedding):
+                    setattr(m, f'alpha', alpha)
+
+            tgts = []
+            pred_tgts = []
+            with torch.no_grad():
+                for src, tgt, in loader:
+                    src = src.transpose(-1, -2).to(self.device)
+                    tgt = tgt.transpose(-1, -2).to(self.device)
+
+                    for sentence in range(src.size(0)):
+                        pred_tgt, _ = self.rnn_translate(
+                            src[sentence], tgt[sentence])
+                        pred_tgts.append(pred_tgt)
+
+                    # hack to remove <eos> <pad>
+                    tgt_words = [[[
+                        element for element in ' '.join(self.vocab_transform[
+                            utils.tgt_lang].lookup_tokens(
+                                list(tgt[example, 1:].cpu().numpy()))).
+                        replace('<pad>', '').replace('<eos>', '').split(' ')
+                        if element != ''
+                    ]] for example in range(tgt.size(0))]
+
+                    tgts += tgt_words
+                bleu_scores.append(bleu_score(pred_tgts, tgts))
+
+        self.save_metrics(bleu_scores, name=f'{self.name}_test_bleu_scores')
+
+        return max(bleu_scores)
