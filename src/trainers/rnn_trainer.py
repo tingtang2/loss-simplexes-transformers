@@ -58,7 +58,11 @@ class RNNTrainer(BaseTrainer):
                     f"Epoch: {epoch}, Train loss: {train_loss:.3f}, Val loss alpha 0: {val_loss[0]:.3f}, Val loss alpha 0.5: {val_loss[1]:.3f}, Val loss alpha 1: {val_loss[2]:.3f}, "
                     f"Epoch time = {(end_time - start_time):.3f}s, cos sim: {cos_sim}, l2: {l2}"
                 )
-                val_loss = val_loss[1]
+                if self.val_midpoint_only:
+                    val_loss = val_loss[0]
+                else:
+                    val_loss = val_loss[1]
+
             else:
                 val_loss = self.eval_epoch(val_loader)
                 logging.info((
