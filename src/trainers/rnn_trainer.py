@@ -348,6 +348,9 @@ class SubspaceRNNTrainer(RNNTrainer):
         random_iteration = random.randint(0, 7)
         alphas = [0.0, 0.5, 1.0]
 
+        if self.val_midpoint_only:
+            alphas = [0.5]
+
         for i, alpha in enumerate(alphas):
             for m in self.model.modules():
                 if isinstance(m, nn.Linear) or isinstance(

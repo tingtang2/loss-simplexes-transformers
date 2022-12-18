@@ -82,9 +82,12 @@ def main() -> int:
                         default=3,
                         type=int,
                         help='number of lstm layers')
-    parser.add_argument('--val_midpoint_only',
-                        action='store_true',
-                        help='only collect validation metrics for the midpoint of the line (for speed)')
+    parser.add_argument(
+        '--val_midpoint_only',
+        action='store_true',
+        help=
+        'only collect validation metrics for the midpoint of the line (for speed)'
+    )
 
     args = parser.parse_args()
     configs = args.__dict__
@@ -111,7 +114,7 @@ def main() -> int:
 
     # perform experiment n times
     #for iter in range(configs['num_repeats']):
-    #trainer.run_experiment()
+    trainer.run_experiment()
     test_bleu = trainer.calc_test_bleu()
     print(f'test bleu score: {100 * test_bleu:.2f}')
     logging.info(f'test bleu score: {test_bleu * 100:.2f}')
