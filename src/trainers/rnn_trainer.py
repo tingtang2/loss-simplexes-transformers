@@ -176,19 +176,26 @@ class RNNTrainer(BaseTrainer):
                                              utils.MAX_LENGTH)
 
             for di in range(utils.MAX_LENGTH):
-                if use_attention:
-                    mask = self.model.create_mask(input_tensor)
-                    decoder_output, decoder_hidden, cell, decoder_attention = self.model.decoder(
-                        decoder_input.reshape((1, -1)), decoder_hidden, cell,
-                        encoder_outputs, mask)
-
-                    #TODO: pad this
-                    # decoder_attentions[di] = decoder_attention
-                else:
-                    if 'subspace' in self.name:
+                if 'subspace' in self.name:
+                    if use_attention:
+                        mask = self.model.create_mask(input_tensor)
+                        decoder_output, decoder_hidden, cell, decoder_attention = self.model.decode(
+                            decoder_input.reshape((1, -1)), decoder_hidden,
+                            cell, encoder_outputs, mask)
+                        #TODO: pad this
+                        # decoder_attentions[di] = decoder_attention
+                    else:
                         decoder_output, decoder_hidden, cell = self.model.decode(
                             decoder_input.reshape((1, -1)), decoder_hidden,
                             cell)
+                else:
+                    if use_attention:
+                        mask = self.model.create_mask(input_tensor)
+                        decoder_output, decoder_hidden, cell, decoder_attention = self.model.decoder(
+                            decoder_input.reshape((1, -1)), decoder_hidden,
+                            cell, encoder_outputs, mask)
+                        #TODO: pad this
+                        # decoder_attentions[di] = decoder_attention
                     else:
                         decoder_output, decoder_hidden, cell = self.model.decoder(
                             decoder_input.reshape((1, -1)), decoder_hidden,
@@ -444,6 +451,11 @@ class SubspaceRNNTrainer(RNNTrainer):
         self.model.load_state_dict(
             torch.load(f'{self.save_dir}models/{self.name}.pt'))
         self.model.eval()
+        
+        use_attention = False
+
+        if 'attention' in self.name:
+            use_attention = True
 
         alphas = [i / 10 for i in range(0, 11)]
         bleu_scores = []
@@ -463,7 +475,7 @@ class SubspaceRNNTrainer(RNNTrainer):
 
                     for sentence in range(src.size(0)):
                         pred_tgt, _ = self.rnn_translate(
-                            src[sentence], tgt[sentence])
+                            src[sentence], tgt[sentence], use_attention=use_attention)
                         pred_tgts.append(pred_tgt)
 
                     # hack to remove <eos> <pad>

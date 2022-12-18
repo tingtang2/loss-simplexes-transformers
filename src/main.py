@@ -94,6 +94,10 @@ def main() -> int:
         'only collect validation metrics for the midpoint of the line (for speed)'
     )
 
+    parser.add_argument('--debug',
+                        action='store_true',
+                        help='move stuff to cpu for better tracebacks')
+
     args = parser.parse_args()
     configs = args.__dict__
 
@@ -123,14 +127,6 @@ def main() -> int:
     test_bleu = trainer.calc_test_bleu()
     print(f'test bleu score: {100 * test_bleu:.2f}')
     logging.info(f'test bleu score: {test_bleu * 100:.2f}')
-
-    # EMB_SIZE = 256
-    # NHEAD = 4
-    # FFN_HID_DIM = 512
-    # BATCH_SIZE = 32
-    # NUM_ENCODER_LAYERS = 3
-    # NUM_DECODER_LAYERS = 3
-    # NUM_EPOCHS = 18
 
     return 0
 

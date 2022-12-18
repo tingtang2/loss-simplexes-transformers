@@ -284,9 +284,6 @@ class AttentionDecoderRNN(nn.Module):
 
         output, (hidden, cell) = self.lstm(rnn_input, (hidden, cell))
 
-        # print('output size', output.size())
-        # print('weighted size', weighted_encoder_outputs.size())
-        # print('inputs size', inputs_embed.size())
         output = self.out(
             torch.cat((output, weighted_encoder_outputs, inputs_embed),
                       dim=-1))

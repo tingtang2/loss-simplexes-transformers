@@ -115,10 +115,10 @@ class AttentionSeq2SeqLSTMSubspace(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
         # attention stuff
-        self.attn = LinesLinear(embed_size + hidden_size, hidden_size)
+        self.attn = LinesLinear(2 * hidden_size, hidden_size)
         self.v = LinesLinear(hidden_size, 1, bias=False)
 
-        self.coalesce_layers = nn.Linear(n_layers, 1)
+        self.coalesce_layers = LinesLinear(n_layers, 1)
 
         # decoder stuff
         self.tgt_embedding = LinesEmbedding(tgt_vocab_size, embed_size)
@@ -131,7 +131,6 @@ class AttentionSeq2SeqLSTMSubspace(nn.Module):
         self.decoder.initialize(seed)
         self.output = LinesLinear(2 * hidden_size + embed_size, tgt_vocab_size)
         self.output.initialize(seed)
-        self.device = device
 
         self.device = device
 
@@ -161,14 +160,14 @@ class AttentionSeq2SeqLSTMSubspace(nn.Module):
         src_len = encoder_outputs.shape[1]
 
         # repeat decoder hidden state src_len times
-        hidden = F.relu(
+        new_hidden = F.relu(
             self.coalesce_layers(hidden.reshape(batch_size, hid_dim, -1)))
 
-        hidden = hidden.transpose(-1, -2)
-        hidden = hidden.repeat(1, src_len, 1)
+        new_hidden = new_hidden.transpose(-1, -2)
+        new_hidden = new_hidden.repeat(1, src_len, 1)
 
         energy = torch.tanh(
-            self.attn(torch.cat((hidden, encoder_outputs), dim=2)))
+            self.attn(torch.cat((new_hidden, encoder_outputs), dim=2)))
 
         attention = self.v(energy).squeeze(2)
         attention = attention.masked_fill(mask == 0, -1e10)
@@ -179,7 +178,7 @@ class AttentionSeq2SeqLSTMSubspace(nn.Module):
         weighted_encoder_outputs = attention_vals @ encoder_outputs
         rnn_input = torch.cat((tgt_embed, weighted_encoder_outputs), dim=-1)
 
-        output, (hidden, cell) = self.lstm(rnn_input, (hidden, cell))
+        output, (hidden, cell) = self.decoder(rnn_input, (hidden, cell))
         output = self.output(
             torch.cat((output, weighted_encoder_outputs, tgt_embed), dim=-1))
         return output, hidden, cell, attention_vals.squeeze()
