@@ -281,6 +281,138 @@ class RNNTrainer(BaseTrainer):
 
         return loader
 
+    def ensemble_calc_test_bleu(self):
+        loader = self.create_test_loader()
+        self.model.load_state_dict(
+            torch.load(
+                f'{self.save_dir}models/{self.name}_ensemble_member_0.pt'))
+
+        if 'attention' in self.name:
+            use_attention = True
+            self.other_model = AttentionSeq2SeqLSTM(
+                src_vocab_size=self.src_vocab_size,
+                tgt_vocab_size=self.tgt_vocab_size,
+                embed_size=self.embed_size,
+                hidden_size=self.hidden_size,
+                dropout_prob=self.dropout_prob,
+                device=self.device,
+                n_layers=self.n_layers).to(self.device)
+        else:
+            use_attention = False
+            self.other_model = Seq2SeqLSTM(src_vocab_size=self.src_vocab_size,
+                                           tgt_vocab_size=self.tgt_vocab_size,
+                                           embed_size=self.embed_size,
+                                           hidden_size=self.hidden_size,
+                                           dropout_prob=self.dropout_prob,
+                                           device=self.device,
+                                           n_layers=self.n_layers).to(
+                                               self.device)
+
+        self.other_model.load_state_dict(
+            torch.load(
+                f'{self.save_dir}models/{self.name}_ensemble_member_1.pt'))
+
+        self.model.eval()
+        self.other_model.eval()
+        tgts = []
+        pred_tgts = []
+        with torch.no_grad():
+            for src, tgt, in loader:
+                src = src.transpose(-1, -2).to(self.device)
+                tgt = tgt.transpose(-1, -2).to(self.device)
+
+                for sentence in range(src.size(0)):
+                    pred_tgt, _ = self.ensemble_rnn_translate(
+                        src[sentence],
+                        tgt[sentence],
+                        use_attention=use_attention)
+                    pred_tgts.append(pred_tgt)
+
+                # hack to remove <eos> <pad>
+                tgt_words = [[[
+                    element for element in ' '.join(self.vocab_transform[
+                        utils.tgt_lang].lookup_tokens(
+                            list(tgt[example, 1:].cpu().numpy()))).replace(
+                                '<pad>', '').replace('<eos>', '').split(' ')
+                    if element != ''
+                ]] for example in range(tgt.size(0))]
+
+                tgts += tgt_words
+        return bleu_score(pred_tgts, tgts)
+
+    def ensemble_rnn_translate(self,
+                               input_tensor,
+                               tgt_tensor,
+                               use_attention=False):
+        self.model.eval()
+        self.other_model.eval()
+
+        with torch.no_grad():
+            input_length = input_tensor.size(0)
+
+            # first model
+            encoder_outputs, encoder_hidden, cell = self.model.encoder(
+                input_tensor.reshape((1, -1)))
+
+            decoder_input = torch.tensor([[utils.BOS_IDX]],
+                                         device=self.device)  #BOS
+            decoder_hidden = encoder_hidden
+
+            # second model
+            encoder_outputs_other, encoder_hidden_other, cell_other = self.other_model.encoder(
+                input_tensor.reshape((1, -1)))
+
+            decoder_input_other = torch.tensor([[utils.BOS_IDX]],
+                                               device=self.device)  #BOS
+            decoder_hidden_other = encoder_hidden_other
+
+            decoded_tokens = []
+            decoder_attentions = torch.zeros(utils.MAX_LENGTH,
+                                             utils.MAX_LENGTH)
+
+            for di in range(utils.MAX_LENGTH):
+                # first model
+                if use_attention:
+                    mask = self.model.create_mask(input_tensor)
+                    decoder_output, decoder_hidden, cell, decoder_attention = self.model.decoder(
+                        decoder_input.reshape((1, -1)), decoder_hidden, cell,
+                        encoder_outputs, mask)
+                    #TODO: pad this
+                    # decoder_attentions[di] = decoder_attention
+                else:
+                    decoder_output, decoder_hidden, cell = self.model.decoder(
+                        decoder_input.reshape((1, -1)), decoder_hidden, cell)
+
+                # second model
+                if use_attention:
+                    mask_other = self.other_model.create_mask(input_tensor)
+                    decoder_output_other, decoder_hidden_other, cell_other, decoder_attention = self.other_model.decoder(
+                        decoder_input_other.reshape(
+                            (1, -1)), decoder_hidden_other, cell_other,
+                        encoder_outputs_other, mask_other)
+                    #TODO: pad this
+                    # decoder_attentions[di] = decoder_attention
+                else:
+                    decoder_output_other, decoder_hidden_other, cell_other = self.other_model.decoder(
+                        decoder_input_other.reshape((1, -1)),
+                        decoder_hidden_other, cell_other)
+
+                combined_decoder_output = (decoder_output +
+                                           decoder_output_other) / 2
+
+                top_pred_token = combined_decoder_output.argmax(-1)
+                decoded_tokens.append(top_pred_token.item())
+                if top_pred_token.item() == utils.EOS_IDX:
+                    break
+
+                decoder_input = top_pred_token.squeeze().detach()
+                decoder_input_other = top_pred_token.squeeze().detach()
+
+            decoded_words = self.vocab_transform[utils.tgt_lang].lookup_tokens(
+                decoded_tokens)
+
+            return decoded_words[:-1], decoder_attentions[:di + 1]
+
 
 class SubspaceRNNTrainer(RNNTrainer):
 
@@ -451,7 +583,7 @@ class SubspaceRNNTrainer(RNNTrainer):
         self.model.load_state_dict(
             torch.load(f'{self.save_dir}models/{self.name}.pt'))
         self.model.eval()
-        
+
         use_attention = False
 
         if 'attention' in self.name:
@@ -475,7 +607,9 @@ class SubspaceRNNTrainer(RNNTrainer):
 
                     for sentence in range(src.size(0)):
                         pred_tgt, _ = self.rnn_translate(
-                            src[sentence], tgt[sentence], use_attention=use_attention)
+                            src[sentence],
+                            tgt[sentence],
+                            use_attention=use_attention)
                         pred_tgts.append(pred_tgt)
 
                     # hack to remove <eos> <pad>

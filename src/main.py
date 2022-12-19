@@ -123,10 +123,11 @@ def main() -> int:
 
     # perform experiment n times
     #for iter in range(configs['num_repeats']):
-    trainer.run_experiment()
-    test_bleu = trainer.calc_test_bleu()
-    print(f'test bleu score: {100 * test_bleu:.2f}')
-    logging.info(f'test bleu score: {test_bleu * 100:.2f}')
+    # trainer.run_experiment()
+    # test_bleu = trainer.calc_test_bleu()
+    test_bleu = trainer.ensemble_calc_test_bleu()
+    print(f'ensemble test bleu score: {100 * test_bleu:.2f}')
+    logging.info(f'ensemble test bleu score: {test_bleu * 100:.2f}')
 
     return 0
 
